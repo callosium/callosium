@@ -306,6 +306,37 @@ function freshMcpCache(): McpCache {
  *     what the freshness gate below exists to prevent.
  *   - invalidate() is called after every write this server makes and must drop
  *     whatever the host derived from the brain, so the next read reflects it. */
+/** Scoped-corpus memo.
+ *
+ *  scopedInputs() derives a filtered VaultTexts/graph/emb for a partial-scope agent,
+ *  and recall keys its rank index on the VaultTexts OBJECT IDENTITY. Returning a fresh
+ *  object per call therefore forced a full re-tokenize AND fuzzy-index rebuild of the
+ *  entire vault on EVERY query — measured 16ms → 1644ms per recall at 2,000 notes, and
+ *  it hit essentially every real user, because pairAgent defaults to
+ *  denyRead:['Private/'] and Private/ is a core schema partition, so no dashboard-paired
+ *  agent ever took the full-scope fast path.
+ *
+ *  Keyed on the SOURCE texts object (a WeakMap, so entries die with the cache generation
+ *  that produced them — a re-index or brain switch mints a new VaultTexts and orphans the
+ *  old entry) and, within that, on the agent's exact scope signature plus the identities
+ *  of the source graph and embeddings. Any scope edit, revocation, expiry or re-index
+ *  changes the key and forces a fresh derivation, so this can never serve a stale or
+ *  wider-than-current view. */
+const scopedMemo = new WeakMap<
+  VaultTexts,
+  Map<string, {
+    graph: GraphIndex | null;
+    emb: EmbeddingIndex | null;
+    out: { texts: VaultTexts; graph: GraphIndex | null; emb: EmbeddingIndex | null };
+  }>
+>();
+/** Distinct agents per brain is small; this only bounds a pathological case. */
+const SCOPED_MEMO_MAX = 16;
+const scopeSignature = (s: AgentIdentity['scopes']): string =>
+  // denyRead is optional on the type; treat absent and empty as the same signature,
+  // which is what canRead does too.
+  `${(s.read ?? []).join('|')}»${(s.denyRead ?? []).join('|')}»${(s.write ?? []).join('|')}`;
+
 /** A running server the caller can shut down. Returned by serveHttp (and mirrored by
  *  serveDashboard) so an embedder or a test can stop listening instead of being forced
  *  to process.exit() with the listener still open — which on Windows aborts the process
@@ -512,6 +543,14 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
     // readable, forcing EVERY agent onto the copy path. Only genuinely partial-
     // scope agents (a denyRead/allowlist beyond System) get the scoped copy.
     if (texts.files.every((f) => readable.has(f) || isReservedPath(f))) return { texts, graph, emb };
+    // Partial scope: reuse the derivation for this (source corpus × scope × graph × emb)
+    // rather than rebuilding it — including a fresh Float32 matrix — on every tool call.
+    // See scopedMemo for why this is load-bearing rather than a micro-optimization.
+    const sig = scopeSignature(agent.scopes);
+    let perTexts = scopedMemo.get(texts);
+    if (!perTexts) { perTexts = new Map(); scopedMemo.set(texts, perTexts); }
+    const hit = perTexts.get(sig);
+    if (hit && hit.graph === graph && hit.emb === emb) return hit.out;
     const keep = (p: string): boolean => readable.has(p);
     const filterMap = <V>(m: Map<string, V>): Map<string, V> => new Map([...m].filter(([p]) => keep(p)));
     let contentIndex: VaultTexts['contentIndex'] = null;
@@ -549,7 +588,11 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
       for (const [p, h] of Object.entries(emb.noteHashes)) if (keep(p)) noteHashes[p] = h;
       sEmb = { ...emb, chunks, vectors, noteHashes };
     }
-    return { texts: sTexts, graph: sGraph, emb: sEmb };
+    const out = { texts: sTexts, graph: sGraph, emb: sEmb };
+    // Evict oldest-first if a brain somehow accumulates many distinct scope shapes.
+    if (perTexts.size >= SCOPED_MEMO_MAX) perTexts.delete(perTexts.keys().next().value as string);
+    perTexts.set(sig, { graph, emb, out });
+    return out;
   };
 
   server.registerTool(

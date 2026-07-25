@@ -217,8 +217,17 @@ try {
   await fakeEmbeddings(brainA, 'Knowledge/Espresso Ratios.md');
 
   // ── 1) RAM: one brain per process vs two ─────────────────────────────────────
-  const shared = weigh('shared');
-  const priv = weigh('private');
+  // Two samples per mode, averaged. A single sample of arrayBuffers is noisy enough
+  // to swing the delta between ~9MB and ~45MB purely on GC timing, which made the
+  // assertion below flaky. Averaging two independent child processes per mode costs a
+  // few seconds and removes the flake without weakening the threshold.
+  const mean = (mode) => {
+    const a = weigh(mode);
+    const b = weigh(mode);
+    return { bytes: Math.round((a.bytes + b.bytes) / 2), served: a.served && b.served };
+  };
+  const shared = mean('shared');
+  const priv = mean('private');
   ok('shared-source endpoint serves the brain', shared.served);
   ok('private-cache endpoint serves the brain', priv.served);
   console.log(`\n  one vector matrix        ${MB(MATRIX_BYTES)}`);

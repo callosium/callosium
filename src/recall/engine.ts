@@ -763,13 +763,25 @@ function evidenceFor(file: string, section: string, words: string[]): RecallResu
 // now rank-fusion across independent lanes instead of winner-take-all
 // displacement (research pass + Gbrain source dissection, 11 Jul 2026).
 
-const rankCache = new WeakMap<VaultTexts, { graph: GraphIndex | null; index: RankIndex }>();
+// One entry PER GRAPH VARIANT, not one per corpus. The cache used to hold a single
+// {graph,index} pair, so a caller asking for the graph-less index (resolve()'s fuzzy
+// fallback passes graph=null) evicted the index recall had just built WITH the graph —
+// and the next recall rebuilt it from scratch. An agent alternating resolve→recall paid
+// a full rank + fuzzy index build on every single call. Keyed by graph identity (null is
+// a valid key), so both variants coexist and a re-index still orphans the whole entry
+// with its VaultTexts.
+const rankCache = new WeakMap<VaultTexts, Map<GraphIndex | null, RankIndex>>();
+/** Only bounds a pathological case: in practice this holds at most 2 (graph and null). */
+const RANK_VARIANTS_MAX = 4;
 
 export function ensureRankIndex(vaultTexts: VaultTexts, graph: GraphIndex | null): RankIndex {
-  const hit = rankCache.get(vaultTexts);
-  if (hit && hit.graph === graph) return hit.index;
+  let perGraph = rankCache.get(vaultTexts);
+  if (!perGraph) { perGraph = new Map(); rankCache.set(vaultTexts, perGraph); }
+  const hit = perGraph.get(graph);
+  if (hit) return hit;
   const index = buildRankIndex(vaultTexts.files, vaultTexts.texts, vaultTexts.archived, graph);
-  rankCache.set(vaultTexts, { graph, index });
+  if (perGraph.size >= RANK_VARIANTS_MAX) perGraph.delete(perGraph.keys().next().value as GraphIndex | null);
+  perGraph.set(graph, index);
   return index;
 }
 

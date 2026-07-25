@@ -45,7 +45,9 @@ Plenty of tools can point an AI at a folder of Markdown. What sets Callosium apa
 
 ## The receipts
 
-Not marketing math — measured on the builder's own brain of 1,089 real notes: 10,000 test questions, **98.8/100 found**, **0 invented answers** in 700 trick questions, ~43ms median. The full benchmark ships with this repo (`test/`) so you can run it yourself.
+Not marketing math — measured on the builder's own brain of 1,162 real notes, in English and Arabic: 15,000 generated questions, **96.4% found**, **0 invented answers** across 1,450 trick questions about things that don't exist, 49ms median (116ms at the 99th percentile).
+
+You can reproduce this on **your** brain, which is the only number that should convince you. The question generator and the grader both ship here (`test/gen-scenarios-v4.mjs`, `test/run-bench-v2.mjs`); they read your vault and build the test set from your own notes. The author's own question set is deliberately *not* included — it is generated from a private vault, so every question and expected answer embeds real note paths. A benchmark you run against your own notes is worth more than one you download anyway.
 
 ## Your files, your storage
 

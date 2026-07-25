@@ -23,11 +23,13 @@
     "callosium": "dist/cli.js"
   },
   "scripts": {
-    "build": "node src/dashboard/build-ui.mjs && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
+    "build": "npm run clean && node src/dashboard/build-ui.mjs && tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "typecheck": "tsc",
     "cli": "node src/cli.ts",
     "test": "node test/unit-frontmatter.mjs && node test/unit-temporal.mjs && node test/unit-fuzzy.mjs && node test/unit-vaultlock.mjs && node test/e2e-mcp.mjs && node test/e2e-brainswitch.mjs && node --expose-gc test/e2e-sharedbrain.mjs && node test/e2e-structure.mjs && node test/run-structuring-bench.mjs && node test/e2e-auth.mjs && node test/e2e-entitlement.mjs && node test/smoke-readnote.mjs && node test/e2e-history.mjs && node test/e2e-activity.mjs && node test/e2e-honesty.mjs && node test/smoke-dashboard.mjs",
-    "prepublishOnly": "npm run build && npm test"
+    "prepublishOnly": "npm run build && npm test",
+    "clean": "node --input-type=module -e \"import fs from 'node:fs'; fs.rmSync('dist',{recursive:true,force:true})\"",
+    "prepack": "npm run build"
   },
   "files": [
     "dist",

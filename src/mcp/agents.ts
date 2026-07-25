@@ -58,7 +58,18 @@ export function normalizeRel(p: string): string {
  *  default macOS). The disk layer resolves "system/agents.json" to the same
  *  file as "System/agents.json", so the scope check must too — otherwise a
  *  lowercase path dodges SERVER_ONLY/denyRead and reads the token registry. */
-const foldCase = (s: string) => (process.platform === 'linux' ? s : s.toLowerCase());
+// NFC BOTH SIDES. normalizeRel NFC-normalizes the requested path, but scope prefixes
+// arrive raw — the dashboard builds them from fs.readdir, and macOS/iCloud hand back
+// decomposed (NFD) names. Comparing an NFC path against an NFD prefix silently matched
+// nothing: a denyRead entry for a folder whose name carries any mark (Arabic, accented
+// Latin, anything composed) denied NOTHING, and an NFD read allow-list granted nothing.
+// Verified before the fix: deny stored NFC → canRead false; the SAME deny stored NFD →
+// canRead true. Case folding alone was never enough, because the two forms differ in
+// code points, not in case.
+const foldCase = (s: string) => {
+  const n = s.normalize('NFC');
+  return process.platform === 'linux' ? n : n.toLowerCase();
+};
 
 /** Paths no agent may ever read or write, regardless of scope: the registry
  *  itself (holds tokens) and the schema (the constitution is human-managed). */

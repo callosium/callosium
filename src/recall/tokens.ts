@@ -41,12 +41,24 @@ export function tokenize(q: string): string[] {
   // "محـمد" collapses to "محمد" instead of surviving as its own fused token.
   const raw = foldDigits(q.normalize('NFC').toLowerCase())
     .replace(/ـ/g, '')
+    // Arabic tashkeel (harakat) are OPTIONAL vocalization marks: قَرَار and قرار are the
+    // same word, and a vault mixes both freely (a pasted Quran/poetry line is vocalized,
+    // a typed note is not). Strip them so the two forms produce identical tokens.
+    // U+064B-065F fathatan..marks, U+0670 superscript alef, U+06D6-06ED Quranic marks.
+    // NOT the same as the \p{M} class below: these are decoration, whereas an Indic
+    // matra changes the word and must survive.
+    .replace(/[ً-ٰٟۖ-ۭ]/g, '')
     .replace(/[؟؛،۔٪٬]/g, ' ')
     // Ordinal dates: "16th of july" must meet "Session 16 July" — strip the
     // English ordinal suffix from NUMBERS only ("16th"→"16", "3rd"→"3";
     // words like "worth"/"first" are untouched by the \d requirement).
     .replace(/\b(\d+)(?:st|nd|rd|th)\b/g, '$1')
-    .split(/[^\p{L}\p{N}]+/u)
+    // \p{M} (combining marks) belongs with the letters, not with the separators. Without
+    // it every remaining mark acted as a word boundary and shredded the word around it —
+    // Hebrew niqqud and Indic matras came out as fragments, and a Devanagari word split
+    // at every vowel sign. Arabic is already handled above by stripping tashkeel; this
+    // keeps every OTHER script's marks attached to the base letter they modify.
+    .split(/[^\p{L}\p{N}\p{M}]+/u)
     .filter(Boolean);
   const out: string[] = [];
   for (let i = 0; i < raw.length; i++) {

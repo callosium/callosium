@@ -1,0 +1,56 @@
+node_modules/
+dist/
+*.log
+.env
+.DS_Store
+
+# generated from a real brain during testing — never commit personal vault content
+test/scenarios.json
+test/scenarios-v2.json
+test/stress-failures.json
+test/.fixture-brain/
+test/.fixture-structure/
+test/judge/
+test/gold/
+test/gbrain-headtohead.md
+test/v2-failures.json
+test/judge2/
+test/scenarios-v3.json
+test/judge3/
+test/judge4/
+test/scenarios-v4-final.json
+test/judge5/
+
+# design prototype from Claude Design — contains vault-derived mock data, keep local
+design/
+*.tgz
+
+# benchmark outputs + failure dumps generated FROM the real vault — never commit
+# (they embed real note paths incl. Private/). Synthetic fixtures like
+# structuring-bench.json are deliberately safe and stay tracked.
+test/scenarios-casual*.json
+test/*-failures.json
+test/true-misses.json
+test/goal5-*
+
+# benchmark report cards + scenario sets generated from a real brain during
+# testing — regenerable, and may embed personal vault content. Never commit.
+test/scenarios-*.json
+test/_bench-*.json
+# underscore-prefixed test files are scratch by convention: probe scripts and the
+# raw per-query dumps the calibration harness writes (those carry real questions
+# and note paths, including Private/). The harnesses themselves stay tracked.
+test/_bench15k-*
+test/_calib-*
+test/*-casual*.txt
+test/*-casual*.err.txt
+test/scenarios-v4-current.json
+test/agent-tool.mjs
+test/wp-3hop.mjs
+test/wp-ceiling.mjs
+test/wp-firerate.mjs
+test/wp-judge-batch.mjs
+test/wp-judge-data.mjs
+test/wp-multihop.mjs
+test/wp-secondhop.mjs
+test/.review-pass.wf.js

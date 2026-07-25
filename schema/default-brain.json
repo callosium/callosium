@@ -1,0 +1,129 @@
+{
+  "$schema": "https://callosium.com/schema/brain-schema-v0.json",
+  "schemaVersion": "0.1.0",
+  "name": "default",
+  "description": "The default Callosium brain: core partitions, note types, routing rules, indexes. Extracted from a year of real multi-agent use.",
+
+  "partitions": {
+    "core": [
+      { "path": "Profile", "job": "who the owner is", "scaffold": ["About Me.md", "Working Style.md", "Goals and Now.md"] },
+      { "path": "Knowledge", "job": "evergreen reusable know-how" },
+      { "path": "Initiatives", "job": "the owner's own ventures and side projects, one anchor each; named to never collide with Work/Projects" },
+      { "path": "People", "job": "one short note per person" },
+      { "path": "Memory", "job": "episodic append-only records", "structure": "<Source>/<Year>/<MM Month>/", "indexPerSource": true },
+      { "path": "Logs", "job": "dated session logs", "structure": "<AI>/<Year>/<MM Month>/", "scaffold": ["Log Index.md"] },
+      { "path": "Milestones", "job": "finished workstreams" },
+      { "path": "Personal", "job": "personal life and setup" },
+      { "path": "Private", "job": "gated sensitive content", "gated": true, "gateTopics": ["health", "family-medical", "intimate", "identity-documents"] },
+      { "path": "Inbox", "job": "quick unsorted captures" },
+      { "path": "Reference", "job": "verbatim source material in topic buckets", "bucketed": true },
+      { "path": "Templates", "job": "note templates" },
+      { "path": "System", "job": "generated instructions, schema config, filing rules", "managedByCallosium": true }
+    ],
+    "modules": [
+      {
+        "id": "work",
+        "path": "Work",
+        "job": "job or client work",
+        "structure": ["Projects/<Name>/ (anchor + Raw/<Doc Type>/)", "Meetings/<Year>/<Month>/<Day>/<Topic>/", "People/", "Playbooks/"]
+      },
+      {
+        "id": "social-media",
+        "path": "Social Media",
+        "job": "studied content and creator knowledge",
+        "structure": ["Content Studied/", "Playbooks/", "Creators/", "Platforms/"]
+      }
+    ]
+  },
+
+  "noteTypes": ["profile", "knowledge", "initiative", "project", "person", "memory", "log", "milestone", "moc", "reference", "system", "content study"],
+
+  "frontmatter": {
+    "required": ["type", "tags", "status", "updated"],
+    "optional": ["aliases", "source", "date", "completed", "started", "area", "related", "platform", "creator"],
+    "serverStamped": {
+      "fields": ["created_by", "updated_by"],
+      "rule": "stamped by the brain server from the authenticated MCP connection on every agent write; agents cannot forge or omit them; unstamped changes are the human owner's"
+    },
+    "statusValues": ["active", "idea", "parked", "done", "archived", "complete"],
+    "exempt": "verbatim source files keep original content and format untouched"
+  },
+
+  "naming": {
+    "notesAndFolders": "plain words with spaces; no number prefixes, underscores, or dashes",
+    "memoryRecords": "<Source> <Topic> <DD Mon YYYY>",
+    "dailyMemory": "<Source> Daily Memory <DD Mon YYYY> — ONE note per DAY. At the first turn of each day, create THAT day's note; afterwards append only to TODAY's note. Never append to a previous day's note: a dated note stops being written the moment the date changes.",
+    "sessionLogs": "Session <D> <Month> <YYYY>.md (day unpadded)",
+    "headings": "sentence case"
+  },
+
+  "linking": {
+    "style": "wikilink",
+    "resolution": "exact filename or frontmatter alias",
+    "rules": [
+      "link generously; every note reachable from a hub",
+      "long record names link with a piped alias",
+      "add aliases to frequently-referenced records",
+      "verify every link target resolves before saving"
+    ]
+  },
+
+  "hubs": {
+    "root": "Home.md",
+    "pattern": "one MOC per major topic; navigation is hub-first, fan out through links",
+    "orphanPolicy": "housekeeping flags notes unreachable from any hub"
+  },
+
+  "routing": [
+    {
+      "order": 1,
+      "test": "authoritative or detail-critical (spec, contract, export, deliverable; exact wording or numbers matter)",
+      "action": "preserve raw verbatim: work material to Work/Projects/<Name>/Raw/<Doc Type>/, else Reference/<Bucket>/; then a short pointing summary in the matching non-raw location, linked both ways",
+      "onUnsure": "treat as detail-critical"
+    },
+    {
+      "order": 2,
+      "test": "general or conversational (brainstorm, idea, recap)",
+      "action": "concise knowledge or memory note in the brain's own words; raw optional"
+    },
+    {
+      "order": 3,
+      "test": "AI-generated content",
+      "action": "mark clearly; never silently overwrite the owner's words"
+    }
+  ],
+
+  "standingRules": [
+    { "match": "credentials or API keys", "destination": "the designated keys file", "note": "configurable; storing plaintext is the owner's explicit choice" },
+    { "match": "person worth remembering", "destination": "People/ or Work/People/" },
+    { "match": "capture with no obvious home", "destination": "Inbox/" },
+    { "match": "finished workstream", "destination": "Milestones/ with completed: date" }
+  ],
+
+  "groundTruthProtocol": ["knowledge note first", "raw copy into Reference/<Bucket>/ unaltered", "knowledge note ends with a Raw source link"],
+
+  "sessionEndRitual": [
+    "append dated entry to Logs/",
+    "memory record if substantial",
+    "bump changed anchors' updated: date",
+    "update Goals and Now if priorities shifted; milestone note if a workstream finished",
+    "add index lines (Log Index, source Index)"
+  ],
+
+  "indexes": [
+    { "path": "Logs/Log Index.md", "content": "reverse-chronological line per session log" },
+    { "path": "Memory/<Source>/Index.md", "content": "line per record, grouped by month" }
+  ],
+
+  "agentIdentity": {
+    "registration": "each connected AI gets a registered identity at pairing: client type + owner-chosen display name (e.g. 'Claude Desktop', 'OpenClaw (Makoto)')",
+    "attribution": "server stamps created_by/updated_by on every MCP write from the authenticated identity",
+    "memorySource": "memory records use the agent display name as their Source and file under Memory/<DisplayName>/",
+    "auditLog": "append-only server-side log (file, agent, operation, timestamp), rendered as the per-agent audit view in the dashboard"
+  },
+
+  "config": {
+    "note": "per-owner settings served over MCP alongside this schema; not part of the schema itself",
+    "keys": ["styleProfile", "toolRouting", "agentScopes", "enabledModules", "customPartitions"]
+  }
+}

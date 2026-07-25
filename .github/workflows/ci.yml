@@ -1,0 +1,52 @@
+# CI — build + test + package smoke on all three OSes.
+# This matrix IS the cross-platform packaging proof: every push must build the
+# publishable dist, pass the full e2e suite, and install+run the packed tarball
+# the way a stranger's `npx callosium` would — on Linux, Windows, and macOS.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test-pack:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      # onnxruntime-node's postinstall reaches out to nuget.org for the OPTIONAL GPU
+      # (CUDA/TensorRT) provider blobs. They are multi-GB, we never use them (CPU
+      # inference only), and the download is the single most common CI failure —
+      # it timed out on ubuntu and failed the run while Windows/macOS passed.
+      # ONNXRUNTIME_NODE_INSTALL=skip keeps the CPU binaries that ship inside the
+      # package and skips only the unbundled extras, so CI stops depending on a
+      # third-party CDN. scripts/build-portable.mjs already strips these same blobs.
+      - run: npm ci
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+      - run: npm run typecheck
+      - run: npm run build
+      # e2e suites run from source (node 24 type-stripping); they cover the MCP
+      # server (scoping, attribution, rotation), auth, entitlement, read_note.
+      - run: npm test
+      # package smoke — install the packed tarball into a clean dir and run the
+      # real user flow: init a brain, write a note, recall it with evidence.
+      - name: pack smoke
+        shell: bash
+        run: |
+          set -e
+          npm pack
+          mkdir /tmp/packtest && cd /tmp/packtest
+          npm init -y > /dev/null
+          npm install --ignore-scripts "$(ls "$GITHUB_WORKSPACE"/callosium-*.tgz)"
+          npx callosium init brain
+          printf 'the zephyr project deadline is 22 August, budget 40000 QAR\n' > "brain/Inbox/zephyr project.md"
+          npx callosium recall "zephyr deadline" --brain brain | grep -q "zephyr project.md"
+          echo "pack smoke OK"

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "callosium-dashboard",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["src/cli.ts", "serve", "--port", "4319"],
+      "port": 4319
+    }
+  ]
+}

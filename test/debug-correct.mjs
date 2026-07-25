@@ -1,0 +1,13 @@
+import { Vault } from '../src/core/vault.ts';
+import { loadTexts, ensureRankIndex, tokenize } from '../src/recall/engine.ts';
+import { correctTerm, deletes1 } from '../src/recall/fuzzy.ts';
+const vault = Vault.open(process.argv[2]);
+const texts = await loadTexts(vault);
+const idx = ensureRankIndex(texts, null);
+const w = process.argv[3];
+console.log('tokenized question sample:', tokenize('شو صار مع preparign cgb').join('|'));
+console.log(`df(${w}):`, idx.df.get(w) ?? 0, '| df(preparing):', idx.df.get('preparing') ?? 0);
+console.log('query deletes sample:', deletes1(w).slice(0, 4).join(','));
+const hit = correctTerm(idx.fuzzy, w);
+console.log('correctTerm =>', JSON.stringify(hit));
+console.log('byDelete has "preparin":', (idx.fuzzy.byDelete.get('preparin') ?? []).slice(0, 5));

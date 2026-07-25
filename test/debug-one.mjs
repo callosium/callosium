@@ -1,0 +1,11 @@
+import { Vault } from '../src/core/vault.ts';
+import { loadTexts, recall } from '../src/recall/engine.ts';
+import { buildGraph } from '../src/graph/index.ts';
+import { loadEmbeddings } from '../src/recall/semantic.ts';
+const vault = Vault.open(process.argv[2]);
+const texts = await loadTexts(vault);
+const { index: graph } = await buildGraph(vault);
+const emb = await loadEmbeddings(vault);
+const a = await recall(process.argv[3], texts, graph, false, emb);
+console.log('found:', a.found, '| corrections:', JSON.stringify(a.corrections ?? []), '| relax:', JSON.stringify(a.relaxation ?? null));
+for (const r of (a.results ?? []).slice(0, 5)) console.log(' ', r.path.slice(0, 90));

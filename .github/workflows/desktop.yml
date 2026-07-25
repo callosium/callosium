@@ -1,0 +1,47 @@
+# Stage-2: build the Callosium desktop app (Tauri) on GitHub's Windows runner —
+# which has NO Smart App Control, so cargo's build-script executables run freely
+# (the dev machine's SAC blocks them). Produces the NSIS installer as an artifact.
+#
+# CODE SIGNING (required for the app to RUN on default-secure Windows 11 / SAC):
+# add an EV or OV code-signing cert as repo secrets and uncomment the env below.
+# Until then the artifact is UNSIGNED and only runs where SAC is off.
+name: desktop
+on:
+  workflow_dispatch:
+  push:
+    tags: ["desktop-v*"]
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - name: Rust toolchain (stable-msvc)
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri -> target
+      - name: Install deps (engine + desktop CLI)
+        run: |
+          npm ci
+          npm ci --prefix desktop
+      # - name: Sign config (uncomment once a cert is in repo secrets)
+      #   Provide these to Tauri's Windows signer (tauri.conf bundle.windows.certificateThumbprint
+      #   or the WINDOWS_CERTIFICATE env pair) so the installer + app are trusted by SAC/SmartScreen.
+      #   env:
+      #     TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.WINDOWS_CERTIFICATE }}
+      #     TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+      - name: Build desktop installer
+        working-directory: desktop
+        run: node build-desktop.mjs
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: callosium-desktop-windows-x64
+          path: desktop/src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

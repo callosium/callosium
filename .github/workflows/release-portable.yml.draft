@@ -1,0 +1,108 @@
+# DRAFT — not active until renamed to release-portable.yml.
+#
+# Builds the standalone portable bundles (official Node runtime + app +
+# production node_modules + launcher) so consumers WITHOUT Node can run
+# Callosium. One job per target because `npm ci` installs the HOST's native
+# binaries (sharp/onnxruntime) — cross-target staging is not supported by
+# scripts/build-portable.mjs.
+#
+# Verification mirrors the manual Step-5 procedure: on Windows the smoke test
+# runs with PATH stripped to System32 so ONLY the bundled runtime can be found.
+name: release-portable
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+jobs:
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: win-x64
+            archive: callosium-win-x64-portable.zip
+          - os: macos-latest # arm64 runners
+            platform: darwin-arm64
+            archive: callosium-darwin-arm64-portable.tar.gz
+          # darwin-x64 DISABLED: onnxruntime-node ships no darwin/x64 binding
+          # (verified against 1.24.3), so build-portable's required-binding gate
+          # would fail this job on every release. Re-enable only after pinning
+          # an ort version with Intel-mac prebuilds. Intel-Mac consumers: npx.
+          # - os: macos-15-intel
+          #   platform: darwin-x64
+          #   archive: callosium-darwin-x64-portable.tar.gz
+          - os: ubuntu-latest
+            platform: linux-x64
+            archive: callosium-linux-x64-portable.tar.gz
+          - os: ubuntu-24.04-arm  # NOTE: public-repo-only runner; on a private repo swap for a self-hosted arm64 or drop the target
+            platform: linux-arm64
+            archive: callosium-linux-arm64-portable.tar.gz
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # build-portable runs `npm run build` itself, downloads the pinned Node
+      # runtime from nodejs.org (SHA256-verified against SHASUMS256.txt),
+      # stages a production-only install, prunes other-platform onnxruntime
+      # binaries, and archives the bundle.
+      - name: build portable bundle
+        run: node scripts/build-portable.mjs --platform ${{ matrix.platform }} --workdir "${{ runner.temp }}/portable" --out "${{ runner.temp }}/out/${{ matrix.archive }}"
+
+      # Smoke test on a runtime-less PATH (Windows): unzip to a fresh dir and
+      # run the real consumer flow through the launcher only.
+      - name: smoke (windows, PATH stripped)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dest = "${{ runner.temp }}\smoke"
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          tar -xf "${{ runner.temp }}\out\${{ matrix.archive }}" -C $dest
+          $b = Join-Path $dest 'callosium-${{ matrix.platform }}-portable'
+          $env:PATH = "$env:SystemRoot\system32;$env:SystemRoot"
+          Set-Location $b
+          .\callosium.cmd --help
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\callosium.cmd init testbrain
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          .\callosium.cmd remember "the zephyr canister is stored in bay 7" --title "Zephyr canister" --brain testbrain
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $out = .\callosium.cmd recall "zephyr" --brain testbrain
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if (-not ($out | Select-String 'Zephyr canister')) { Write-Error 'recall missed the note'; exit 1 }
+          Write-Host 'portable smoke OK'
+
+      - name: smoke (unix, PATH stripped)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -e
+          dest="${{ runner.temp }}/smoke"
+          mkdir -p "$dest"
+          tar -xzf "${{ runner.temp }}/out/${{ matrix.archive }}" -C "$dest"
+          cd "$dest/callosium-${{ matrix.platform }}-portable"
+          export PATH=/usr/bin:/bin
+          ./callosium --help
+          ./callosium init testbrain
+          ./callosium remember "the zephyr canister is stored in bay 7" --title "Zephyr canister" --brain testbrain
+          ./callosium recall "zephyr" --brain testbrain | grep -q "Zephyr canister"
+          echo "portable smoke OK"
+
+      - uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ runner.temp }}/out/${{ matrix.archive }}
+          if-no-files-found: error
+
+      # On a published release, attach the bundle to it.
+      - name: attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh release upload --clobber "${{ github.event.release.tag_name }}" "${{ runner.temp }}/out/${{ matrix.archive }}"

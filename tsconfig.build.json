@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    // Source imports use explicit .ts extensions (so node can run src/ directly
+    // during development). TS 5.7+ rewrites them to .js in the emitted output —
+    // without this, dist would import missing .ts files and break everywhere.
+    "rewriteRelativeImportExtensions": true,
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["src/**/*.ts"]
+}

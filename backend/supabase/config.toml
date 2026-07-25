@@ -1,0 +1,9 @@
+# Supabase project config (declarative). The important line here is the waitlist
+# function's `verify_jwt = false`: the landing page is PUBLIC and posts an email
+# with no auth, so the function must NOT require a JWT. Without this a plain
+# `supabase functions deploy waitlist` re-enables JWT verification on redeploy and
+# the public endpoint starts returning 401 to every signup. Committing it here
+# makes the exemption survive every redeploy (belt-and-suspenders with the
+# `--no-verify-jwt` flag in DEPLOY.md). (Kimi 4d)
+[functions.waitlist]
+verify_jwt = false

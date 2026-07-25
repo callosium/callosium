@@ -1,0 +1,1337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Callosium</title>
+<link rel="icon" href="/assets/logomark.png">
+<!-- Fonts are self-hosted under /assets/fonts (offline-first; no runtime Google
+     fetch). @font-face rules sit at the top of the style block below. -->
+<!-- Supabase Auth (hosted accounts for the Connected tier). Public config only —
+     the publishable key is safe to ship; RLS protects the data. The FREE tier is
+     local and needs no account (the "continue as guest" path). The SDK is VENDORED
+     under /assets/vendor (no runtime CDN) and lazy-loaded by sbEnsure() on first
+     auth use — so the only network call login makes is to the Supabase auth API. -->
+<script>window.CALLOSIUM_SUPABASE = { url: 'https://kiimqsadfzwlgywskafq.supabase.co', key: 'sb_publishable_dkyt1K5gO6V4cf40nsUOGg_O3-Qjltw' };</script>
+<style>
+  /* Pixelify Sans bundled locally (offline-first; the design DNA font) */
+  @font-face{font-family:'Pixelify Sans';font-style:normal;font-weight:400 700;font-display:swap;src:url(data:font/woff2;base64,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) format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+2000-206F,U+2122,U+2191,U+2193,U+2212,U+2215;}
+  /* Self-hosted families (latin subsets, variable files, served same-origin from
+     /assets/fonts; mirrors what the Google css2 link shipped, render-blocking
+     third-party request removed). Arabic and other scripts fall through to the
+     system fallbacks in each family stack, same as before. */
+  @font-face{font-family:'Inter';font-style:normal;font-weight:400 600;font-display:swap;src:url(/assets/fonts/inter-var.woff2) format('woff2')}
+  @font-face{font-family:'Space Grotesk';font-style:normal;font-weight:400 700;font-display:swap;src:url(/assets/fonts/space-grotesk-var.woff2) format('woff2')}
+  @font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400 500;font-display:swap;src:url(/assets/fonts/jetbrains-mono-var.woff2) format('woff2')}
+  @font-face{font-family:'Press Start 2P';font-style:normal;font-weight:400;font-display:swap;src:url(/assets/fonts/press-start-2p-400.woff2) format('woff2')}
+  :root{
+    --void:#07060B; --surface:#0E0C14; --surface2:#141019; --edge:#242030; --edge2:#6B617E;
+    --starlight:#EFEDF2; --dust:#9A93A8; --faint:#7E7694;
+    --synapse:#FF2E88; --synapse-ink:#FF2E88; --ember:#FF6B3D; --acid:#52F2B8; --amber:#FFB454; --danger:#FF3355;
+    --on-accent:#07060B;
+    --spectrum:linear-gradient(90deg,#FFB454 0%,#FF5C38 30%,#FF2E88 62%,#B44BFF 100%);
+    --console:#060510;
+    /* activity feed panel: dark console in the dark theme (values below are what
+       it always was), a paper-adjacent panel in the light theme (see override) */
+    --feed-bg:var(--console); --feed-head:rgba(20,16,25,.55); --feed-line:rgba(36,32,48,.6);
+    --feed-live:var(--acid);
+    --mono:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    --sans:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    --grot:'Space Grotesk',var(--sans);
+    --pixel:'Pixelify Sans',var(--mono);
+    /* Numbers only: Press Start 2P has unmistakable digits (Pixelify's 5/8 read as S).
+       Falls back to JetBrains Mono (also crisp digits) if the web font can't load. */
+    --pixelnum:'Press Start 2P',var(--mono);
+    --chrome-bg:rgba(7,6,11,.72); --rail-bg:rgba(14,12,20,.5); --bar-bg:rgba(7,6,11,.4); --hud-bg:rgba(7,6,11,.82);
+  }
+  [data-theme="light"]{
+    --void:#F5F2EE; --surface:#FFFFFF; --surface2:#EAE6DE; --edge:#E0DAD0; --edge2:#857C6F;
+    --starlight:#141019; --dust:#5B5470; --faint:#6E6880;
+    --synapse:#E01670; --synapse-ink:#C41367; --ember:#C8401C; --acid:#0E7A50; --amber:#8F6100; --danger:#C81E3C;
+    --on-accent:#FFFFFF;
+    --console:#0E0C14;
+    /* activity feed goes paper-adjacent in light: white body, surface2 chrome,
+       edge hairlines: the same panel language as the partitions card beside it */
+    --feed-bg:var(--surface); --feed-head:var(--surface2); --feed-line:var(--edge);
+    /* "live" label on the beige feed header: --acid (#0E7A50) is 4.31:1 there,
+       one step darker keeps the same hue at AA (4.66:1) */
+    --feed-live:#0D744B;
+    --chrome-bg:rgba(245,242,238,.82); --rail-bg:rgba(255,255,255,.62); --bar-bg:rgba(255,255,255,.5); --hud-bg:rgba(245,242,238,.86);
+  }
+  /* Console surfaces (setup terminals, code fences, config boxes, the brain map) stay
+     dark in BOTH themes; pin their inner palette to the dark values so text on
+     them never flips with the page theme. No-op under the dark theme. The overview
+     activity feed is NOT one of these: it re-skins per theme (see --feed-* above). */
+  .on-console{
+    --surface:#0E0C14; --surface2:#141019; --edge:#242030; --edge2:#6B617E;
+    --starlight:#EFEDF2; --dust:#9A93A8; --faint:#7E7694;
+    --synapse:#FF2E88; --synapse-ink:#FF2E88; --ember:#FF6B3D; --acid:#52F2B8; --amber:#FFB454; --danger:#FF3355;
+    --on-accent:#07060B;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  a{color:var(--synapse-ink);text-decoration:none}
+  ::-webkit-scrollbar{width:9px;height:9px}
+  ::-webkit-scrollbar-thumb{background:var(--edge2);border-radius:0}
+  ::-webkit-scrollbar-thumb:hover{background:var(--faint)}
+  ::-webkit-scrollbar-track{background:transparent}
+  input::placeholder{color:var(--faint)}
+  @keyframes seampulse{0%,100%{opacity:.5}50%{opacity:1}}
+  @keyframes dotpulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @keyframes hudpulse{0%,100%{transform:scale(1);opacity:.75}50%{transform:scale(1.6);opacity:1}}
+  @keyframes blink{50%{opacity:0}}
+  @keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+  @keyframes noteflash{0%{box-shadow:0 0 0 2px var(--synapse), 0 0 26px -4px var(--synapse);background:rgba(255,46,136,.05)}100%{box-shadow:0 0 0 0 transparent;background:transparent}}
+  .note-flash{animation:noteflash 1.6s ease-out 1;border-radius:0}
+  @media (prefers-reduced-motion: reduce){ .note-flash{animation:none} }
+  @keyframes barflow{0%{transform:translateX(-100%)}100%{transform:translateX(320%)}}
+  @keyframes orbit{to{transform:rotate(360deg)}}
+  /* hover behaviors (prototype's style-hover, as real CSS) */
+  .navitem:hover{background:var(--surface2);color:var(--starlight)!important;--icon:var(--starlight)!important}
+  .btn:hover{border-color:var(--dust);color:var(--starlight)}
+  .btn-syn:hover{border-color:var(--synapse)}
+  .chip:hover{border-color:var(--dust)}
+  .logline:hover{background:rgba(255,46,136,.08)}
+  .qa:hover{border-color:var(--dust);color:var(--starlight)}
+  .qa-hot:hover{background:var(--synapse);color:var(--on-accent);box-shadow:0 0 22px -6px var(--synapse)}
+  .search:focus{border-color:var(--synapse);outline:none}
+  /* Settings "reduce motion" (or the OS pref) stills every keyframe animation */
+  [data-reduce-motion] *{animation:none!important}
+  @media (prefers-reduced-motion: reduce){ *{animation:none!important} }
+  /* …but the coach bubbles start at opacity:0 and rely on the 'rise' keyframe to
+     fade in — with animation killed they'd stay invisible-yet-clickable. Force
+     them visible so the tour is usable with reduced motion. */
+  [data-reduce-motion] .coach-bubble{opacity:1!important}
+  @media (prefers-reduced-motion: reduce){ .coach-bubble{opacity:1!important} }
+
+  /* ── responsive: tablet & phone. Desktop geometry (>=880px) is untouched.
+     The fixed nav rail becomes a horizontal top strip; content grids reflow
+     to one/two columns; tap targets grow to >=44px. Inline styles carry the
+     desktop layout, so these rules need !important to win below 880px. ── */
+  @media (max-width:879px){
+    .shell-body{flex-direction:column!important}
+    .shell-rail{width:100%!important;flex-direction:row!important;align-items:center;gap:12px;border-right:0!important;border-bottom:1px solid var(--edge);padding:8px 12px!important}
+    .shell-rail .rail-brand{margin:0!important;font-size:13px!important;flex-shrink:0}
+    .shell-rail .rail-foot{display:none}
+    #nav{display:flex;flex-direction:row;align-items:center;gap:2px;overflow-x:auto;flex:1;min-width:0}
+    .navitem{margin-bottom:0!important;min-height:44px;white-space:nowrap;flex-shrink:0}
+    .shell-topbar{flex-wrap:wrap;gap:10px!important;padding:10px 14px!important}
+    .shell-topbar .topbar-name{min-width:0;overflow:hidden}
+    .shell-topbar #brainName{overflow:hidden;text-overflow:ellipsis}
+    .shell-search{order:5;width:100%!important;max-width:none!important;margin-left:0!important}
+    button{min-height:44px}
+    #screen{padding:16px 14px 26px!important}
+    #screen h1{font-size:clamp(26px,6.4vw,42px)!important}
+    .vitals-grid{grid-template-columns:1fr 1fr!important}
+    .vitals-hero{grid-column:1 / -1}
+    .ov-panels{grid-template-columns:1fr!important}
+    .ag-layout{grid-template-columns:1fr!important}
+    .notes-layout{grid-template-columns:1fr!important}
+    .notes-tree-panel{max-height:34vh}
+    .notes-edit-grid{grid-template-columns:1fr!important;grid-template-rows:1fr 1fr}
+    .hf-card{flex-direction:column}
+    .hf-actions{flex-direction:row!important;align-items:center!important;flex-wrap:wrap}
+    .st-row{flex-wrap:wrap}
+    .ag-detail-head{flex-wrap:wrap}
+    .shell-hud .hud-disk{display:none}
+    .shell-hud{gap:10px!important}
+    .shell-hud > span{white-space:nowrap;flex-shrink:0}
+    #hudStatus{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex-shrink:1!important}
+    /* brain map: the left dock collapses into a bottom strip (search + one
+       swipeable legend row + zoom), the canvas takes everything above it */
+    .map-stage{flex-direction:column!important;min-height:0!important}
+    .map-canvas-wrap{order:1;min-height:0}
+    .map-side{order:2;width:100%!important;flex-direction:row!important;flex-wrap:wrap;align-items:center;gap:8px;border-right:0!important;border-top:1px solid var(--edge);padding:6px 8px!important;max-height:38%!important;overflow-y:auto}
+    .map-side-search{border-bottom:0!important;padding:0!important;flex:1;min-width:150px}
+    #mapSearchResults{top:auto!important;bottom:calc(100% + 6px)!important}
+    #mapLegend{order:3;width:100%;flex-direction:row!important;flex-wrap:nowrap!important;overflow-x:auto;overflow-y:hidden;padding:2px 0!important;gap:6px!important;scrollbar-width:none}
+    #mapLegend::-webkit-scrollbar{display:none}
+    #mapLegend [data-map-legend]{width:auto!important;flex-shrink:0}
+    #mapLegend .map-lg-count{display:none}
+    .map-side-foot{border-top:0!important;padding:0!important;flex-direction:row!important;align-items:center}
+    .map-side-search input:focus{border-color:var(--synapse);outline:none}
+  }
+  @media (max-width:639px){
+    .vitals-grid{grid-template-columns:1fr!important}
+    #screen{padding:14px 12px 22px!important}
+    .shell-topbar .topbar-indexed{display:none}
+    .shell-hud .hud-version{display:none}
+    .map-hint{display:none}
+    .map-shell{min-height:480px!important}
+    .map-stage{min-height:0!important}
+    /* brain map: the note detail panel docks to the bottom as a thumb-reach sheet */
+    #mapPanel{top:auto!important;bottom:56px!important;left:12px!important;right:12px!important;width:auto!important;max-height:42%;overflow:auto}
+    #stBrainName{width:100%!important}
+  }
+  /* 8-bit "COIN OP" cursor set, generated by src/dashboard/assets/cursors/generate-cursors.py.
+     Pixel PNGs live in that folder (provenance); the runtime path is the data-URIs below.
+     Fine pointers only: touch keeps the system cursor. */
+  /* __CURSORS_START__ */
+  @media (pointer:fine){
+    :root{
+      --cu-pointer1:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABCElEQVR42u2WMQ6CMBSGX/8wgSMHYGD1Fm4k6mE4BpfwBmLiSUycGDwAI7DiYpMGi7T0URz4N0pf3tf/L6UiCuOePmq7WpBngYioSXMiIlJhvAKsCQH1YQ0IDAdUCB8g0A02ae7NDfx66QMCUxOWjgQmk5aMBDaTl4CAbQE3BOYUce4LzC3k2hdwtdAVAhw5Sog5CmwLdlXBeg4Ec1a7qwq2u0NgskqdxVEY9xwQGGvedrWQDUyAWADU5ibXtNPr3rMB6JqbxOIKAZPmY+PX48M9Apn11IY6PC90vu3ZozA+iMokE0T0BeHqgtU5UCaZkKsdc8NW1t+xzm7pjpd/wbCZS/NNm/5Cb124hH+rCovKAAAAAElFTkSuQmCC");
+      --cu-pointer2:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABT0lEQVR42u2aMQ6CMBSGH8YJHTmAA6snMVEPwzE8jJp4ElcHD+CIrjg9ogRSIEBL+/2bEmtDv/7/e4VoFSeF1Oj9eUUSgBYSuMobkKeZ5GlWXljFSdFEBwT4fANCIwECmi6EQkLwBES6qr+rXaf14yQ+1gsQ0JYAExFzJYEU6PtDX1ICD+jrAb6kBAQMRcBcU4IUGGvguaQEBIz9B66TQAqMlQJzqRcgYGoCXKsXSAHbE7CdEhDgykSqJEDARFrayn22QCgE6L5WElw7F4CAofZyWwfXjHeFBHoBUy9gqtWrVVvbZ4wQ4LoHtO3S9Puu9fvheStERC6bXQQBLnlA3/68qxccr9u/z7ZIgICh3xTtesKkJECALQKGHlDdXXXe3532AggYa+C+JECAL+cBupJVEqp7nl7AVw9o8gITMRDgGwEmEugGEUIIIYQQsqIvgy2wIIWdMZQAAAAASUVORK5CYII=");
+      --cu-link1:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABYElEQVR42u1XMY6DMBBcIze0tHGRPCAdEkXyg5OSdPCX1FT5iOkukfIDKJDS3QNIAa3blElFZFsGbG4R0elGQtYC0o5nPWubwAD29+vT9P68/CKAAGrz0/fuR4kPlzVgwYOZ4USgaKr5CBRNBZvFaj4Cm8XqbypAXRVoSZjsOcaadKwCt+1R+R7m6ShSoxUwwUQKRYGiqSD2S8ggAiY4hGDfiHRVdEWsCMR+Cdkjeo8nhxrLqpgUsXZB7JfKOKkLujYgDOzv16dcBtKVVF9QWAjzVFkHVE4+VVKrTnjbHqEOEsgeEdRBMs9u2Pp8ip5vRcCm2Xy8Anr5hsrp6V5ngv/K60xwJbEedxKw6dsYRIwEWl+Gefp+sGRngkMdJJ0KkL5O6NoX6iBRZmqKD5e10og8zDP/UP1NZUA7lvfJ3lcGipGYCa7MVo/l2etnCW+q1S7HfQoQ1zshBrDulf9AwQsD5sTVfjH/zAAAAABJRU5ErkJggg==");
+      --cu-link2:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABrElEQVR42u2aMW7CMBiFXxALa1cY4ADdkBjaG1Si2eAunTtxEbq1lXqDMiCxcQAYmpWVsR2qP6pcjGNiu3b93hYZIpL38f7/d1Kgpe73b582n38Z3hWISB1krq6rEz1Pt2fXy9frKG9A9gTwBvAGeNKq2mFV7UhANlXgp/MAcNMfMQOyJECcT4UEEsAMIAFhM6Dp9BhqaiQBoTNgc/tw9vvj98egpJCAWPuApqQwA2IhQByf9dYAgCdMAACDw/LbMfjZETJlhSkjSICrE9XOHycnjxeeLkCXFU0zggS4PqE4rx6PMeUskDQBtk+AYpH8bl01yJ6AwtZpU4cWm6QakABTBqjOp+Y0q4CrKiDOf1zNT0510tuTgP/eB6jO18/5esyAPAjQ7uwc1iSAGRBQUo101ce0TgIuJaCe6+U//0fprzqrOm5aJwG2BMj0FOssYEsECUhlP6Bt2su6Sgr3A2wJQMM9Qd8Z4YoIeUeZBLQlQCUhdJW4lAhmQOgnQ76clmNd2uvWS/YBkRNg29vr1nWdoum9BBKQWm9vSwQzwFcfkJrYB1AURVHUL30B+qLeXo/6OCEAAAAASUVORK5CYII=");
+      --cu-ibeam1:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAgUlEQVR42mNgGAUDDBiJUcTNJfKfHMO/fntD0HwWYg1zubaQJMv3aMUTpY5poKOAacimAZdrCxnO2FQzMDAwMJgcacUa5FRLA+gG4UqUxFg4mgZGHTDqgFEHjDpg1AGjDhh0DmChZqMUXR0x7QOiW0TkNEqJccBoGhjwjskoGHAAAP6IKDdS4mxNAAAAAElFTkSuQmCC");
+      --cu-ibeam2:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAxElEQVR42u3bIQ6DQBAF0C2pKpZToCsre48eBN2D9B5IJJpTYKltVUUVIZ1uSPZ9iZhsHpNlxJCSiIiUm0NUofrUvHIefHnOIWevSu+AY3TB6/T464H79hZar/gOAAAAgDkg6xzw+UqMl+7r+Xm4b7rlzQF7mwPW3sjWSTHqDesAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIG4/IHpTdK2eDZG00x2hXJuiOsAlCAAAAH+M6AAREZEf8gY9gyhrgg56QgAAAABJRU5ErkJggg==");
+      --cu-ibeamtext1:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAdElEQVR42mNgGAUDDBiJUcTNJfKfHMO/fntD0HwWYg1zubaQJMv3aMUTpY5poKOAacimAfQowRbkVEsD6AbhSpTEWDiaBkYdMOqAUQeMOmDUAaMOGHQOYKFmoxRdHTHtA6JbROQ0SolxwGgaGPCOySgYcAAA90UlN92Sk3kAAAAASUVORK5CYII=");
+      --cu-ibeamtext2:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAs0lEQVR42u3bsQ2EMAwF0ICooGUK5rg9bjb2YA6moIWWGyGcMBFS3h/Ail6s4MKkJCIi9aaJKjT041ny4PuxhZy9rb0DuuiCn3V+9MDL9A2tV30HAAAAwBxQdA7IfSWuvvLmgLfNAbkb+XdSjLphHQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADE7QdEb4rm6tkQSS/dESq1KaoDPIIAAADwx4gOEBERuZEfJJgla2I0As4AAAAASUVORK5CYII=");
+      --cu-busy1:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABCUlEQVR42u2WvQ2DMBCFn09UQMkAFLTZIh1SkmEYgyWyQYiUSSKlosgAlEBLmliyEBBjn00KrsO+0/vuR4dFFCYDvtb1jYBnIwBoswIAoMJ4Azi+rtgSgtSPLSBofKBC+AChqcM2K7xVg5YufUDQLwfXLSEdJ5ctoTXOLiBobQA3BJkEcc4FmQZyzQXZltAWgjj6KCFMLFgbENcl6x4ITLKN65Lt7RDoZDlV4ihMBg4ImhPv+kZIAR0gFgBVXOeZdn4/BjaAKXGdtthCEABc7odF8bnz2+lp3QLtIZKZjkUlfJXmwukikgJSkKsKq/ZAleZCVmIM4rwFS5NvWn6jf8FYzEZ8t93+wj4W5H6f/FTyLwAAAABJRU5ErkJggg==");
+      --cu-busy2:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABZklEQVR42u2aTW7CMBCFnYoVdMkBWLBC6kmQWg7DMTgMIHEStiw4QJfQbbqoJiojrPyQxGP7e6sIBztiPr/nGBez6bx0T3T/+S5cBnpzmav6AW7Lrbstt1XDbDovfXRAQEIqvq6n0jnn9p/nh4b3yy4LT8ADfA25eEL2BEzqbhAKxBM0BbF7AwQ0vfG/HzwjIlYSSIGuX0wlJfCAVzuIPSUgoK+OYk0JUmCojmNJCQgYegDrJJACYw1kdb0AAWMPaG29QAqEfoDQKQEBVh5EkwABqaSA/oeJKZAbAXoFaG1fAAL6mstNHdzaDhEEtK28rpxUVO7zkaC9AA+wTkDTEyLyedv1u5xMOSzWBQRYIuDVs0FNvWBjhAQIkIvN8ePvYtWt8m29QE6lVePiAWHU+7yTOa0r7ZMmYGwvgIChOu5KAgSksh8gldQkhHZ9CBjLA3xeUEcMBKRGQB0JvA0ihBBCCCEURL/cDrSfHOP1CAAAAABJRU5ErkJggg==");
+      --cu-disabled1:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAABE0lEQVR42u1XMQ6DMAxMrE7QqWLsyKP6EJ7Rh/RRjB1RJ2ClUyor2NhxguiAJSRQjO/isx1w7rSDzVteqqtmwc/TPHgrAbCCj23nxrYjCe1KIIDH91YSkJP6EiTAkvqSJMCaest6chdIKcd27Z9kDKlDQJvyaR48Dnb/vH4XBgs+WknAoneqZFskQAteV80i7YbykUj4PXZOWaiRuCZWBDhwrPX79kheDyRiAuAONtC2UykJxDmwRx1w+rODKCYRsx/bbqU55SOBszUQnHHQeBBx72EfCXyzCCkSpdKO7SLtiDsXqFYLPilfSD7lONYUJtXrxY5jSQ6LXGoCUk1oNc/KABfcCm4exTgLOeB/8V9w2mlfX829qUuTE14AAAAASUVORK5CYII=");
+      --cu-disabled2:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABO0lEQVR42u2bOw7CMAyGW8QETIiRkUNxEI7BQTgUIyNiAlaYMmDR5uW8lO8f+3Cl+HPsOOkwIIQQ6ldjrg+tV7vP3P3X+z6WGIAFBGT2/PNw+rm/uZ6LkgABuQiQnpcqRQIElIr9WkiAgFo8X4oECCg16/uSAAG1EWCr7aVCs4BNsWR0T8BSa5afilX5/P5x+Wv3tj3OelbOLeZ75nooCRCQO79rSYsECND2vG92iLUTSwJ1QCsxn2oNAQHaNb1rnk/1vu8aonsCGADqAMdYajULQEBsP6CVeiC0hwgBqfb4pmp2W553taPVPSYLDJ69N0PCVHawdYRCe33Sjta+AQSEekaSUPtsDwFaBNhG3hbzrqs6aYedIfYGIYDzARDAGSEIqKcO8K0Ya/M8BHBWGAL4XwACEEIIIdS1voh72F9shRIdAAAAAElFTkSuQmCC");
+      --cu-resizeh1:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAyElEQVR42mNgGAWjYBSMdMCIS4KbS+Q/jP312xtGWjmACZ/lX1RKyDaYm0vkPwyT5ABqWA4DMDPwOYKJVpYT6whGQpbz3Okh23KXawsZNvhdRjEHPT2xEPI5siGkggC0kOC508PAzSXyH9kRLOhBhdWgTbokW47N0TBHEMwF9AQsyHGNKxTIjQJ0gC09MSEnDEoSHLGWoydCRkLZkBq5AJfleEuw/3od///rdRAsyfCZA9NPdEFE7eggxucDXhmNglEwCkbBKAAAs9tstkrOonQAAAAASUVORK5CYII=");
+      --cu-resizeh2:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAA/klEQVR42u3ZvQ3CMBCG4S8RFVAyAi1bUCOGYQyWYAPEKkhUjEAJtFC5iXD8E+dIlPcpkZAs3xf7cpEAAAAAAMDUVKl/WMxXn1+/v96PaowbUE89AbPcyj/XB0nS8n40XXDpBJKA3Mr/WzOBbp2pSSABY6t86STU9AEdK299Czjb20mSdN5dW9cTSgJnQNdn3leJvu0LnQkkwLeDyRW5bEwWHJu02E518glgAzgDPPd66llgfQuExPYnJKDZMbl7MzcJQ6s8nWDuTDC2MxzKu0Bq5UlA7FQ4lAS381ZTYbceX6fHRKiv7wKhqbB1AsRUmC9DvAsAAAAAAAAAQKovA017fgJG1acAAAAASUVORK5CYII=");
+      --cu-resizev1:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAA4UlEQVR42mNgGGDASI4mbi6R/zD2129vGClxABO5ln9RKcFwDM0dgG45NRzBRK7lMECpI5gosZwajmCi1HJKHUFUCBCynFR1JGVDbD5yubYQQ90erXgGcrImCyEF6IZxc4n83+B3mSFgky4DAwMDwwa/ywwMDAwMPGSWCUwDXRKOOmDUAaMOGHXAqAMG3AEs5NSGyJUQNrWkVEpEVcfI9TysFsTlKJ47PdR3ALGNDZ47PSS3B5iIbQ/ADKem5UQnQkKOINdyknIBLkdQYjkDud0ybi6R///1Ov7D2EO6bzgKAKKvcJa7+F4qAAAAAElFTkSuQmCC");
+      --cu-resizev2:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAABBElEQVR42u2bMQrCQBBFf4KVpvQIVoK3sJbcwEt4DC/hDcTaWwRS5Qgp1TZWEQwurrjsbMj7ZQIbePOyJMysRKadLNaDFvNl9+n6/dFmlgByDIhc+dvqIEkqmmMSJmBA7MoPY20CBlhVPhUTMMC68tYmYEAqlbcyAQNCGRCq8i4TMGAse4Ar2/rktd51vVfMv8bJGzD7d4FvlekNOe8qSVJ52bzd76+/3nm+BPkdBgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABKszPk2xuUoxPkuy69QY10PmDYC/zVFOYDmBFiD2BOkO8AZoUxgPMCGMCZIQzg3CAGEEJI4DwBost5GARFx74AAAAASUVORK5CYII=");
+    }
+    html,body{cursor:var(--cu-pointer1) 1 1,auto;cursor:-webkit-image-set(var(--cu-pointer1) 1x,var(--cu-pointer2) 2x) 1 1,auto;cursor:image-set(var(--cu-pointer1) 1x,var(--cu-pointer2) 2x) 1 1,auto;}
+    a,button,[role="button"],summary,input[type="submit"],input[type="button"],input[type="checkbox"],input[type="radio"],select,[style*="cursor:pointer"],[style*="cursor: pointer"]{cursor:var(--cu-link1) 10 1,pointer!important;cursor:-webkit-image-set(var(--cu-link1) 1x,var(--cu-link2) 2x) 10 1,pointer!important;cursor:image-set(var(--cu-link1) 1x,var(--cu-link2) 2x) 10 1,pointer!important;}
+    input[type="text"],input[type="search"],input[type="email"],input[type="password"],input[type="url"],input[type="tel"],input[type="number"],input:not([type]),textarea,[contenteditable="true"],[contenteditable=""]{cursor:var(--cu-ibeamtext1) 15 15,text!important;cursor:-webkit-image-set(var(--cu-ibeamtext1) 1x,var(--cu-ibeamtext2) 2x) 15 15,text!important;cursor:image-set(var(--cu-ibeamtext1) 1x,var(--cu-ibeamtext2) 2x) 15 15,text!important;}
+    pre,code,kbd,samp{cursor:var(--cu-ibeam1) 15 15,text;cursor:-webkit-image-set(var(--cu-ibeam1) 1x,var(--cu-ibeam2) 2x) 15 15,text;cursor:image-set(var(--cu-ibeam1) 1x,var(--cu-ibeam2) 2x) 15 15,text;}
+    button:disabled,input:disabled,textarea:disabled,select:disabled,[disabled],[aria-disabled="true"]{cursor:var(--cu-disabled1) 15 15,not-allowed!important;cursor:-webkit-image-set(var(--cu-disabled1) 1x,var(--cu-disabled2) 2x) 15 15,not-allowed!important;cursor:image-set(var(--cu-disabled1) 1x,var(--cu-disabled2) 2x) 15 15,not-allowed!important;}
+    body.is-busy,body.is-busy *{cursor:var(--cu-busy1) 1 1,progress!important;cursor:-webkit-image-set(var(--cu-busy1) 1x,var(--cu-busy2) 2x) 1 1,progress!important;cursor:image-set(var(--cu-busy1) 1x,var(--cu-busy2) 2x) 1 1,progress!important;}
+  }
+  /* __CURSORS_END__ */
+</style>
+</head>
+<body>
+<a href="#screen" id="skipLink" style="position:absolute;left:-9999px;top:8px;z-index:100;font-family:var(--mono);font-size:12px;background:var(--surface);color:var(--starlight);border:1px solid var(--synapse);padding:8px 14px" onfocus="this.style.left='8px'" onblur="this.style.left='-9999px'">skip to main content</a>
+<div id="srLive" role="status" aria-live="polite" aria-atomic="true" style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0"></div>
+<div id="app" data-theme="dark" style="position:relative;height:100vh;width:100%;background:var(--void);color:var(--starlight);font-family:var(--sans);overflow:hidden;line-height:1.5">
+<script>/* apply the persisted theme before first paint (no flash of the wrong theme) */
+try{var __bt=localStorage.getItem('callosium_theme');if(__bt==='light'||__bt==='dark')document.getElementById('app').setAttribute('data-theme',__bt);}catch(e){}</script>
+
+  <canvas id="web" style="position:absolute;inset:0;z-index:0;width:100%;height:100%;opacity:.6"></canvas>
+  <div style="position:absolute;inset:0;z-index:1;pointer-events:none;background-image:linear-gradient(var(--edge) 1px,transparent 1px),linear-gradient(90deg,var(--edge) 1px,transparent 1px);background-size:48px 48px;opacity:.12;-webkit-mask-image:radial-gradient(ellipse 90% 80% at 58% 40%,#000 22%,transparent 82%);mask-image:radial-gradient(ellipse 90% 80% at 58% 40%,#000 22%,transparent 82%)"></div>
+
+  <div id="shellMain" style="position:relative;z-index:2;height:100%;display:flex;flex-direction:column">
+
+    <!-- title bar -->
+    <div style="height:34px;flex-shrink:0;display:flex;align-items:center;gap:8px;padding:0 15px;border-bottom:1px solid var(--edge);background:var(--chrome-bg);backdrop-filter:blur(9px)">
+      <span style="width:11px;height:11px;border-radius:50%;background:var(--danger);opacity:.85"></span>
+      <span style="width:11px;height:11px;border-radius:50%;background:var(--amber);opacity:.85"></span>
+      <span style="width:11px;height:11px;border-radius:50%;background:var(--acid);opacity:.85"></span>
+      <span style="flex:1;text-align:center;font-family:var(--mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--faint)">callosium</span>
+      <span style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)">◍ local</span>
+    </div>
+
+    <div class="shell-body" style="flex:1;display:flex;min-height:0">
+
+      <!-- nav rail -->
+      <aside class="shell-rail" style="width:202px;flex-shrink:0;border-right:1px solid var(--edge);background:var(--rail-bg);backdrop-filter:blur(9px);display:flex;flex-direction:column;padding:18px 13px">
+        <div class="rail-brand" style="font-family:var(--pixel);font-weight:700;letter-spacing:.1em;font-size:16px;display:flex;align-items:center;gap:9px;margin:2px 6px 24px;color:var(--starlight)">
+          <span style="width:9px;height:9px;background:var(--synapse);box-shadow:0 0 12px var(--synapse);animation:seampulse 3.2s ease-in-out infinite"></span>CALLOSIUM
+        </div>
+        <nav id="nav" style="flex:1"></nav>
+        <div class="rail-foot" style="border-top:1px solid var(--edge);padding-top:13px;margin-top:10px;font-family:var(--mono);font-size:10px;line-height:1.75;color:var(--faint)">
+          <div id="railPath" style="color:var(--dust);word-break:break-all">~</div>
+          <div style="margin-top:2px" id="railDisk">on disk · <span style="color:var(--acid)">offline</span></div>
+        </div>
+      </aside>
+
+      <!-- main -->
+      <main style="flex:1;min-width:0;min-height:0;display:flex;flex-direction:column">
+
+        <!-- top bar -->
+        <div class="shell-topbar" style="flex-shrink:0;display:flex;align-items:center;gap:14px;padding:13px 24px;border-bottom:1px solid var(--edge);background:var(--bar-bg);backdrop-filter:blur(6px)">
+          <div class="topbar-name" style="display:flex;align-items:center;gap:9px;font-family:var(--mono);font-size:13px;color:var(--starlight);white-space:nowrap">
+            <span id="healthDot" style="width:8px;height:8px;border-radius:50%;background:var(--acid);box-shadow:0 0 8px var(--acid)"></span>
+            <span id="brainName">your brain</span>
+            <span id="healthLabel" style="color:var(--faint);font-size:11px">· healthy</span>
+          </div>
+          <div class="shell-search" style="margin-left:auto;position:relative;width:250px;max-width:38vw">
+            <input id="search" class="search" placeholder="search your brain…" aria-label="search your brain" style="width:100%;background:var(--surface);border:1px solid var(--edge2);border-radius:0;padding:9px 42px 9px 13px;font-family:var(--mono);font-size:12px;color:var(--starlight)">
+            <span style="position:absolute;right:11px;top:50%;transform:translateY(-50%);font-family:var(--mono);font-size:10px;color:var(--faint);pointer-events:none">⌘K</span>
+          </div>
+          <span id="lastIndexed" class="topbar-indexed" style="font-family:var(--mono);font-size:11px;color:var(--faint);white-space:nowrap">indexed —</span>
+          <button id="reindexBtn" class="btn-syn" style="font-family:var(--mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;border:1px solid var(--danger);color:var(--danger);background:transparent;padding:8px 13px;border-radius:0;cursor:pointer;box-shadow:0 0 16px -6px var(--danger)">re-index</button>
+          <button id="themeBtn" title="toggle theme" aria-label="toggle theme" class="btn" style="font-family:var(--mono);font-size:14px;border:1px solid var(--edge2);color:var(--dust);background:transparent;padding:8px 11px;border-radius:0;cursor:pointer">◐</button>
+        </div>
+
+        <!-- screen -->
+        <div id="screen" tabindex="-1" style="flex:1;overflow:auto;padding:22px 24px 34px;outline:none"></div>
+
+      </main>
+    </div>
+
+    <!-- HUD footer -->
+    <div class="shell-hud" style="height:28px;flex-shrink:0;display:flex;align-items:center;gap:14px;padding:0 16px;border-top:1px solid var(--edge);background:var(--hud-bg);backdrop-filter:blur(9px);font-family:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--faint)">
+      <span class="hud-version" style="color:var(--dust)">[ callosium v0.1 ]</span>
+      <span id="hudStatus">brain connected</span>
+      <span style="margin-left:auto" id="hudDisk" class="hud-disk">on this device</span>
+      <span id="hudClock" style="color:var(--dust)">--:--:--</span>
+    </div>
+
+  </div>
+
+  <!-- first-run onboarding (welcome → sign-up → brain setup) covers the shell -->
+  <div id="onboard" style="position:fixed;inset:0;z-index:60;display:none;background:var(--void);overflow:auto"></div>
+  <!-- quick-tour coach marks overlay -->
+  <div id="coach" style="position:fixed;inset:0;z-index:70;display:none"></div>
+</div>
+
+<script>
+// ── pixel-grid icons (7×7, "1"=filled) → inline SVG, crisp edges ──
+const G = {
+  overview:["0111110","0100010","0111110","0000000","0111110","0100010","0111110"],
+  map:     ["1000010","0010000","0100101","0001000","1010001","0000100","0100010"],
+  notes:   ["1111110","1000010","1011010","1000010","1011010","1000010","1111110"],
+  agents:  ["1000001","0111110","1101011","1111111","1011101","0111110","1000001"],
+  health:  ["0110110","1111111","1111111","1111111","0111110","0011100","0001000"],
+  ask:     ["0111110","0100010","0000110","0001100","0001000","0000000","0001000"],
+  plus:    ["0001000","0001000","0001000","1111111","0001000","0001000","0001000"],
+  inbox:   ["0000000","1111111","1000001","1011101","1000001","1111111","0000000"],
+  settings:["0010100","1111111","0110110","1100011","0110110","1111111","0010100"],
+};
+function px(key, size){
+  const grid = G[key]; if(!grid) return '';
+  const h = grid.length, w = Math.max(...grid.map(r=>r.length)); let rects='';
+  grid.forEach((row,y)=>{ for(let x=0;x<row.length;x++) if(row[x]==='1') rects += `<rect x="${x}" y="${y}" width="1" height="1"/>`; });
+  return `<svg width="${size||19}" height="${size||19}" viewBox="0 0 ${w} ${h}" shape-rendering="crispEdges" style="fill:var(--icon,currentColor);display:block;flex-shrink:0;transition:fill .12s">${rects}</svg>`;
+}
+const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const $ = s => document.querySelector(s);
+const $$ = s => [...document.querySelectorAll(s)];
+// Per-launch caller token (P2 #13): the server embeds it as <meta name="cct">
+// and requires it on every /api/ call, so only code that actually loaded THIS
+// page can reach the API. Echoed as a header on fetches; EventSource (which
+// can't set headers) appends it as ?token= via CCT_Q below.
+const CCT = (document.querySelector('meta[name="cct"]')||{}).content || '';
+const CCT_Q = url => url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(CCT);
+const api = p => fetch(p,{headers:{'x-callosium-token':CCT}}).then(r=>r.json());
+const post = (p,b) => fetch(p,{method:'POST',headers:{'content-type':'application/json','x-callosium-token':CCT},body:JSON.stringify(b||{})}).then(r=>r.json());
+
+// ── a11y: one polite live region for the whole app (#srLive in the shell) ──
+// Terse, lowercase mono voice. The zero-width flip forces a text mutation so a
+// repeated message (two saves in a row) is announced again instead of ignored.
+let __srFlip = false;
+function announce(msg){
+  const el = document.getElementById('srLive'); if(!el || !msg) return;
+  __srFlip = !__srFlip;
+  el.textContent = String(msg) + (__srFlip ? '\u200b' : '');
+}
+
+// ── a11y: shared modal semantics (coach tour, agents link/unlink panels) ──
+// One modal at a time. role=dialog + aria-modal + focus moved in on open, Tab
+// trapped inside, Escape closes, focus returns to the invoker on close. Screen
+// modules re-paint on state change, which swaps the panel node: a repaint just
+// calls a11yModalOpen again; the prior binding is detached silently first.
+const A11Y_FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),textarea:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+let a11y_modal = null;
+function a11yModalDetach(){
+  if(!a11y_modal) return;
+  try{ a11y_modal.panel.removeEventListener('keydown', a11y_modal.keyH, true); }catch(e){}
+  a11y_modal = null;
+}
+function a11yModalOpen(panel, opts){
+  a11yModalDetach();
+  if(!panel) return null;
+  opts = opts || {};
+  panel.setAttribute('role','dialog');
+  panel.setAttribute('aria-modal','true');
+  if(opts.label) panel.setAttribute('aria-label', opts.label);
+  if(!panel.hasAttribute('tabindex')) panel.setAttribute('tabindex','-1');
+  const rec = { panel, invoker: opts.invoker || null, invokerSel: opts.invokerSel || null, onClose: opts.onClose || null, keyH: null };
+  const keyH = (e)=>{
+    if(e.key === 'Escape'){ e.preventDefault(); e.stopPropagation(); a11yModalClose(); return; }
+    if(e.key !== 'Tab') return;
+    const f = [...panel.querySelectorAll(A11Y_FOCUSABLE)].filter(el=>!el.disabled && el.getClientRects().length);
+    if(!f.length){ e.preventDefault(); panel.focus(); return; }
+    const first = f[0], last = f[f.length-1], active = document.activeElement;
+    if(e.shiftKey && (active===first || !panel.contains(active))){ e.preventDefault(); last.focus(); }
+    else if(!e.shiftKey && (active===last || !panel.contains(active))){ e.preventDefault(); first.focus(); }
+  };
+  rec.keyH = keyH;
+  panel.addEventListener('keydown', keyH, true);
+  a11y_modal = rec;
+  // move focus in on open, but never yank it away from a control inside the
+  // panel that a click handler focused during this same repaint cycle.
+  const target = panel.querySelector('[data-autofocus]') || panel.querySelector(A11Y_FOCUSABLE) || panel;
+  setTimeout(()=>{
+    if(panel.contains(document.activeElement)) return;
+    try{ target.focus({preventScroll:true}); }catch(e){ try{ target.focus(); }catch(_){}}
+  }, 0);
+  return rec;
+}
+function a11yModalClose(){
+  const rec = a11y_modal;
+  a11yModalDetach();
+  if(!rec) return;
+  if(rec.onClose){ try{ rec.onClose(); }catch(e){} }
+  let inv = rec.invoker;
+  if((!inv || !document.contains(inv)) && rec.invokerSel) inv = document.querySelector(rec.invokerSel);
+  if(inv && document.contains(inv)){ try{ inv.focus({preventScroll:true}); }catch(e){} }
+}
+// Supabase auth client (Connected-tier hosted accounts). The UMD library is NOT
+// in <head> — it was ~1.4-1.6s of parser-blocking boot cost for a flow most
+// users never open — so sbEnsure() injects it on first auth use and resolves
+// with the client (or null when offline/unreachable). sbClient() stays sync for
+// callers that run after a load; it returns null until the library is in.
+let __sb = null, __sbLoad = null;
+function sbClient(){
+  if(__sb) return __sb;
+  const cfg = window.CALLOSIUM_SUPABASE;
+  if(!cfg || !window.supabase || !window.supabase.createClient) return null;
+  __sb = window.supabase.createClient(cfg.url, cfg.key, { auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'pkce' } });
+  return __sb;
+}
+function sbEnsure(){
+  if(__sb) return Promise.resolve(__sb);
+  if(window.supabase && window.supabase.createClient) return Promise.resolve(sbClient());
+  if(__sbLoad) return __sbLoad;
+  __sbLoad = new Promise((resolve)=>{
+    const s = document.createElement('script');
+    s.src = '/assets/vendor/supabase.js'; // vendored (pinned @2.110.8), served by the local app — NO runtime CDN
+    s.onload = ()=>resolve(sbClient());
+    s.onerror = ()=>{ __sbLoad = null; resolve(null); };
+    document.head.appendChild(s);
+  });
+  return __sbLoad;
+}
+
+// ── vitals config (maps to real /api/overview.vitals) ──
+// The star field under each tile is a FUNCTION OF THE NUMBER: star count =
+// max(6, round(norm(value) * 36)). Counts are unbounded, so they use a
+// log-scaled proportion against a documented reference level:
+//   norm = min(1, log10(1+v) / log10(1+ref))      (1.0 = at/past reference)
+//   notes          vs 10,000 notes
+//   connections    vs 25,000 links
+//   meaning points vs 100,000 embedded chunks
+//   agents         vs 8 (the practical pairing ceiling)
+// health is a real percentage, so it maps directly: norm = v/100.
+const VIT = [
+  { key:'notes',        label:'notes stored',   ref:10000,  log:true },
+  { key:'connections',  label:'connections',    ref:25000,  log:true },
+  { key:'health',       label:'brain health',   ref:100,                hero:true, suf:'%' },
+  { key:'meaningPoints',label:'meaning points', ref:100000, log:true },
+  { key:'agents',       label:'agents live',    ref:8,      log:true },
+];
+function vitNorm(vt, v){
+  v = Math.max(0, +v||0);
+  return vt.log ? Math.min(1, Math.log10(1+v)/Math.log10(1+vt.ref)) : Math.min(1, v/vt.ref);
+}
+// vital sparks: the floor of 6 keeps a tile's field alive even at ~0.
+const MAX_STARS = 36;
+function sparkCount(vt, v){ return Math.max(6, Math.min(MAX_STARS, Math.round(vitNorm(vt,v)*MAX_STARS))); }
+
+const state = {
+  screen:'overview', theme:'dark', live:true, lang:'en', account:null, onboardPhase:null,
+  nums:[0,0,0,0,0], targets:[0,0,0,0,0],
+  overview:null, activity:[], reindexing:false,
+};
+
+// ── i18n: t(en, ar) picks by state.lang; applyLang flips dir + re-renders ──
+function t(en, ar){ return state.lang==='ar' && ar!=null ? ar : en; }
+function applyLang(lang){
+  state.lang = lang;
+  const app = $('#app'); if(app) app.setAttribute('dir', lang==='ar'?'rtl':'ltr');
+  try{ document.documentElement.lang = lang; }catch(e){}
+  try{ localStorage.setItem('callosium_lang', lang); }catch(e){}
+  announce('language: ' + (lang==='ar' ? 'العربية' : 'english'));
+  renderNav();
+  if($('#onboard') && $('#onboard').style.display!=='none' && window.renderOnboard){ renderOnboard(state.onboardPhase||'welcome'); }
+  else { render(); }
+}
+try{ const savedLang = localStorage.getItem('callosium_lang'); if(savedLang) state.lang = savedLang; }catch(e){}
+
+// ── "Connect an AI" guide (shared by onboarding + the Agents screen) ──
+// For each MCP-capable client: how to add the Callosium server, and — the part
+// that matters — WHERE to paste the always-on rules so the AI uses the brain
+// automatically every session (like a CLAUDE.md). Researched + fact-checked.
+const CALLOSIUM_AI_CLIENTS = [
+  { id:'claude-code', name:'Claude Code', fmt:'mcpServers', add:'Run  callosium serve  once, then add the MCP with the config below in ~/.claude.json (all projects) or ./.mcp.json (one project) — or via  claude mcp add.', rules:'CLAUDE.md', rulesWhere:'Save these rules in a CLAUDE.md file — ~/.claude/CLAUDE.md for every project, or ./CLAUDE.md in your brain folder. Claude Code loads it in full at the start of every session.' },
+  { id:'claude-desktop', name:'Claude Desktop', fmt:'mcpServers', add:'Settings → Developer → Edit Config (claude_desktop_config.json), paste the server under "mcpServers", then fully quit and reopen Claude Desktop.', rules:'Instructions for Claude', rulesWhere:'Settings → Profile → the "Instructions for Claude" box (applies to every chat). Or create a Project and fill its "Project instructions".' },
+  { id:'chatgpt', name:'ChatGPT', fmt:'url_only', add:'ChatGPT (desktop app AND web) connects only to a REMOTE MCP server over HTTPS — it cannot run a local stdio server, so a tunnel is always needed. Run  callosium mcp --http , expose it with a tunnel (ngrok / Cloudflare) to get an https URL, then in ChatGPT: Settings → Connectors (labeled "Apps" on newer builds) → Advanced → turn on Developer mode → Create custom connector → paste your MCP URL (ending /mcp) + token from the panel below. Turn the connector ON inside the chat before use; write actions ask approval each call. Needs a Plus/Pro/Business/Enterprise/Edu plan (not Free), and tool auto-calling is best-effort — you may have to say "check my Callosium brain".', rules:'Custom Instructions', rulesWhere:'ChatGPT has no per-project rules FILE. Paste the rules into Settings → Personalization → Custom Instructions (applies to every chat), or into a Project’s instructions.' },
+  { id:'gemini', name:'Gemini CLI', fmt:'mcpServers', add:'Add the server under "mcpServers" in ~/.gemini/settings.json (all projects) or ./.gemini/settings.json (this project). Note: the Gemini web app cannot use a local MCP server — this is the Gemini CLI.', rules:'GEMINI.md', rulesWhere:'Put the rules in GEMINI.md — ~/.gemini/GEMINI.md (global) or ./GEMINI.md in your brain folder. Gemini CLI loads it at the start of every session.' },
+  { id:'codex', name:'Codex CLI (OpenAI)', fmt:'codex_toml', add:'Codex connects over HTTP. First run  callosium serve  (the MCP endpoint auto-starts at http://127.0.0.1:4321/mcp). Then add the block below to ~/.codex/config.toml. IMPORTANT: Codex takes the token ONLY as an environment variable — bearer_token_env_var is the NAME of the variable, not the token. Set that variable (see the env-var box), then fully quit and reopen Codex from a new terminal so it reads it.', rules:'AGENTS.md', rulesWhere:'Put the rules in ~/.codex/AGENTS.md (global) or AGENTS.md in your project — Codex loads it every session.' },
+  { id:'kimi', name:'Kimi (Code CLI)', fmt:'mcpServers', add:'Two ways. (a) HTTP (simplest with  callosium serve  running): run  /mcp-config , Transport = http, URL http://127.0.0.1:4321/mcp — Kimi asks for the bearer token as an ENVIRONMENT VARIABLE (a name, not the token): set it as shown in the env-var box, then give Kimi that variable name. (b) stdio: add the server under "mcpServers" in ~/.kimi-code/mcp.json (global) or .kimi-code/mcp.json (this project) — the config below. On Windows install Git for Windows first (Kimi uses Git Bash). Run  /mcp  to confirm it connected.', rules:'AGENTS.md', rulesWhere:'Put the rules in AGENTS.md — ~/.kimi-code/AGENTS.md (global) or AGENTS.md in your brain/project folder. If Kimi does not load it at session start, run /init once or reference @AGENTS.md in your first message.' },
+  { id:'cursor', name:'Cursor', fmt:'mcpServers', add:'Settings → MCP → Add, or create .cursor/mcp.json (this project) / ~/.cursor/mcp.json (all projects) with the server under "mcpServers".', rules:'.cursor/rules', rulesWhere:'Save the rules as .cursor/rules/callosium.mdc with  alwaysApply: true  in its frontmatter — Cursor injects it into every session automatically.' },
+  { id:'windsurf', name:'Windsurf', fmt:'mcpServers', add:'Settings → Cascade → MCP → Add, or edit ~/.codeium/windsurf/mcp_config.json (top-level key "mcpServers").', rules:'Windsurf Rules', rulesWhere:'Put the rules in ~/.codeium/windsurf/memories/global_rules.md (every workspace) or .windsurf/rules/callosium.md (this project).' },
+  { id:'vscode', name:'VS Code (Copilot)', fmt:'servers', add:'Create .vscode/mcp.json with the server under "servers" (note: "servers", not "mcpServers"), then enable it in Copilot Agent mode.', rules:'.github/copilot-instructions.md', rulesWhere:'Create .github/copilot-instructions.md at your workspace root — VS Code applies it to every Copilot Chat request automatically.' },
+  { id:'cline', name:'Cline', fmt:'mcpServers', add:'Cline panel → MCP Servers icon → Configure → paste the server under "mcpServers".', rules:'.clinerules', rulesWhere:'Create a .clinerules/ folder in your project (or the global Cline Rules folder) and drop these rules in a .md file — loaded every session.' },
+  { id:'continue', name:'Continue', fmt:'yaml_list', add:'Create .continue/mcpServers/callosium.yaml with the server under a "mcpServers:" list (type: stdio).', rules:'.continue/rules', rulesWhere:'Add the rules as .continue/rules/callosium.md (or ~/.continue/rules for every project) — Continue loads it into the system message each session.' },
+  { id:'zed', name:'Zed', fmt:'context_servers', add:'Settings → AI → MCP Servers → Add Local Server, or add the server under "context_servers" in settings.json (note: "context_servers", not "mcpServers").', rules:'AGENTS.md', rulesWhere:'Put the rules in AGENTS.md — ~/.config/zed/AGENTS.md (global) or AGENTS.md in your project root. Auto-included in every agent session.' },
+  { id:'jetbrains', name:'JetBrains AI / Junie', fmt:'mcpServers', add:'Settings → Tools → AI Assistant → Model Context Protocol → Add (stdio) → paste the server under "mcpServers".', rules:'.junie/guidelines.md', rulesWhere:'Put the rules in .junie/guidelines.md (or .junie/AGENTS.md) in your project — Junie loads it on every task.' },
+  { id:'warp', name:'Warp', fmt:'nowrap', add:'Settings → AI → Manage MCP servers → + Add → paste the server object below (Warp takes it WITHOUT an "mcpServers" wrapper).', rules:'AGENTS.md / WARP.md', rulesWhere:'Create AGENTS.md (all-caps) in your project root, or add a global Rule under Warp Drive → Personal → Rules.' },
+  { id:'lmstudio', name:'LM Studio', fmt:'mcpServers', add:'Program tab → Install → Edit mcp.json (~/.lmstudio/mcp.json) → add under "mcpServers".', rules:'System Prompt preset', rulesWhere:'Paste the rules into the System Prompt box, save it as a Config Preset, and bind that preset as the model default so it loads every session.' },
+  { id:'goose', name:'Goose', fmt:'ui', add:'Extensions → Add custom extension → enter the Command and Args below (or run  goose configure).', rules:'.goosehints', rulesWhere:'Put the rules in a .goosehints file — ~/.config/goose/.goosehints (global) or in your project root. Goose loads it on every request.' },
+  { id:'jan', name:'Jan', fmt:'ui', add:'Settings → MCP Servers → + Add MCP Server → Transport = STDIO → enter the Command and Args below.', rules:'Assistant Instructions', rulesWhere:'Settings → Assistants → your assistant → the Instructions field. Applies every time that assistant is used.' },
+  { id:'cherry', name:'Cherry Studio', fmt:'ui', add:'Settings → MCP Servers → + Add Server → Type = STDIO → enter the Command and Args below.', rules:'Assistant System Prompt', rulesWhere:'Assistants → your (or the Default) Assistant → the System Prompt / Prompt field. Every chat under it inherits the rules.' },
+  { id:'librechat', name:'LibreChat', fmt:'yaml_mcpServers', add:'Add the server under "mcpServers:" in librechat.yaml (in your install root), then restart LibreChat.', rules:'Agent Instructions', rulesWhere:'Agent Builder → the "Instructions" field of your agent — applied automatically on every use of that agent.' },
+  { id:'openwebui', name:'Open WebUI', fmt:'mcpo', add:'Wrap the server with mcpo, then Admin → Settings → External Tools → add the OpenAPI URL it prints. (mcpo turns a local MCP server into an HTTP tool endpoint.)', rules:'System Prompt', rulesWhere:'Settings → General → System Prompt (your account), or Workspace → Models → System Prompt (per model). Applied to every new chat.' },
+  { id:'msty', name:'Msty', fmt:'nowrap', add:'Toolbox → Add New Tool → STDIO/JSON → paste the server object below (Msty takes it WITHOUT a wrapper key).', rules:'Persona', rulesWhere:'Persona Studio → an Assistant Persona holding these standing instructions, applied per Persona/Project.' },
+  { id:'5ire', name:'5ire', fmt:'ui', add:'Tools → New → enter the Command and Args below (or Import the JSON).', rules:'Prompt (System Message)', rulesWhere:'Prompts → new prompt → put the rules in its System Message field, then apply it to your conversations.' },
+  { id:'witsy', name:'Witsy', fmt:'ui', add:'Settings → MCP → Add Server (stdio) → Command + Args below (or Import the mcpServers JSON).', rules:'Default Instructions', rulesWhere:'Settings → Advanced → the "Default Instructions" field — applied as the system prompt on every new chat.' },
+  { id:'chatwise', name:'ChatWise', fmt:'ui', add:'Settings → Tools → + → Command Line (stdio) → Command + Args below (or Import the mcpServers JSON).', rules:'Assistant System Prompt', rulesWhere:'In a chat, open the side panel → the "Assistant" tab → System Prompt. Applies to all chats using that assistant.' },
+  { id:'typingmind', name:'TypingMind', fmt:'connector', add:'Run the connector on your machine ( npx @typingmind/mcp <token> ), then Settings → Advanced → Model Context Protocol → paste its URL + token + the mcpServers JSON.', rules:'System Instructions', rulesWhere:'Models → Global Settings → System Instruction (applies to every chat), or an AI Agent’s own Instructions.' },
+  { id:'openclaw', name:'OpenClaw', fmt:'mcpNested', add:'Run  openclaw mcp add callosium ..., or edit ~/.openclaw/openclaw.json under the nested "mcp.servers" key.', rules:'AGENTS.md', rulesWhere:'Put the rules in AGENTS.md in your OpenClaw workspace — loaded into the system prompt at the start of every session.' },
+  { id:'hermes', name:'Hermes (Nous)', fmt:'yaml_mcp_servers', add:'Add the server under "mcp_servers:" (snake_case, YAML) in ~/.hermes/config.yaml.', rules:'SOUL.md', rulesWhere:'Put the rules in ~/.hermes/SOUL.md (replace the default identity block) — Hermes loads it into the cached system prompt every session.' },
+];
+function callosiumRules(){
+  return '# Callosium — always use my second brain\n\n'
+    + 'My notes, decisions, people, projects and memory live in my Callosium second brain, reachable through its MCP tools. Use them automatically, every session. I should never have to tell you to look.\n\n'
+    + 'FIRST, before anything else:\n'
+    + '- Call `get_map` the moment the session starts, and again any time you are unsure how my brain is laid out. It tells you how my brain is organized and where things live. Do not answer anything about me until you have loaded it.\n\n'
+    + 'Then, every session:\n'
+    + '- Before answering anything about me, my work, or my past decisions, call `recall` and answer from what it returns, citing the notes. Never from memory alone.\n'
+    + '- If the notes recall returns do not actually CONTAIN the answer to what I asked — only loosely-related mentions of the same words — tell me plainly it is not in my brain yet. Never infer a personal fact (a number, a name, a model, a preference) from notes that merely mention the topic: a note about cars is not the car I drive, a rune with "blood" in it is not my blood type. When in doubt, say you do not have it rather than guess.\n'
+    + '- When exact wording or numbers matter (pricing, contracts, specs, deliverables), do not answer from a summary alone: open the Raw ground-truth source it points to and quote from there, so figures are never approximated.\n'
+    + '- Before writing or filing anything, call `get_filing_rules` and follow it, so every note lands in its right home (sensitive/health/identity notes go to Private).\n'
+    + '- When I share something worth keeping (a decision, fact, person, or plan), save it with `write_note` (it files and attributes it for you). Do not leave it only in the chat.\n'
+    + '- Grow the brain as we talk, without being asked: every turn, add what we covered (decisions, facts, people, numbers, what you did) to the memory note for TODAY. That note is keyed to the current date: at the first turn of each day, create the note for that date, then `append_note` to it, never overwrite. Never append to a note from an earlier date — when the date changes, start a new one. Call `get_filing_rules` for the exact folder and file name. Keep session logs in Logs/ separate. I should never have to nudge you to save.\n'
+    + '- Check `list_notes` / `read_note` before creating, so you extend instead of duplicate, and link related notes with [[wiki-links]].\n'
+    + '- Fill the frontmatter for real: give every note 3-6 lowercase topic tags a future search would actually use. An empty `tags: []` fails the health check exactly like a missing field.\n'
+    + '- UPDATING THE MAP IS A MANDATORY COMMAND, not a suggestion. The MOMENT you create a new folder, subfolder, hierarchy, project, or area, you MUST in the SAME turn: (1) add a map note inside it (`type: moc`, named "<Folder> Home") saying in one line what belongs there, (2) link that new map INTO its parent area\'s map, and (3) link the new map back to the parent. And every single note you create MUST be linked into its area\'s map that same turn. A folder or note that is not on a map is invisible to every future session — leaving one unmapped is a bug you just introduced, so fix it before you finish the turn.\n'
+    + '- VERIFY the map after you build structure: once you have created any new folder or area, call `brain_check`. If it returns a `moc-gap` (a note not on its map) or a `hub-gap` (a folder with no map), you left something off — go back and wire it in before you end the turn. Do not report the work done while brain_check still shows a gap you created.\n'
+    + '- Keep it healthy: if you spot broken links or duplicates, run `brain_check` and fix what is safe.\n\n'
+    + 'Tools: get_map, get_filing_rules, recall, list_notes, read_note, write_note, append_note, overview, brain_check.';
+}
+// The "let your AI do it" version: a single paste the user drops into their AI,
+// which then edits the rules file for them — so they never have to find/open it.
+function callosiumRulesWrapper(file){
+  return 'Open (or create) the file  '+file+'  and paste the following block at the very TOP of it, above anything already there. Keep it exactly as written:\n\n'+callosiumRules();
+}
+function callosiumSpec(spec){ return spec && spec.command ? { command:spec.command, args:spec.args||[], ...(spec.env?{env:spec.env}:{}) } : { command:'callosium', args:['mcp','--brain','<path to your brain folder>'] }; }
+function callosiumCfg(spec, fmt){
+  const s = callosiumSpec(spec), name='callosium', J=(o)=>JSON.stringify(o,null,2);
+  const yArgs=(a)=>(a||[]).map(x=>'      - "'+x+'"').join('\n');
+  // Some clients (ChatGPT) accept ONLY a public HTTPS MCP URL — a local
+  // Command/Args block would be unusable. Point them at the URL + token below
+  // instead of headlining a config their client cannot take.
+  if(fmt==='codex_toml') return '[mcp_servers.callosium]\nurl = "http://127.0.0.1:'+CALLOSIUM_HTTP_PORT+'/mcp"\nbearer_token_env_var = "CALLOSIUM_TOKEN_CODEX"';
+  if(fmt==='url_only') return 'ChatGPT connects only by a REMOTE https URL (no local server) — use the "MCP server URL" + "auth token" boxes below.\nRun  callosium mcp --http  in a terminal, expose that URL through a tunnel (ngrok / Cloudflare), then in ChatGPT → Settings → Connectors ("Apps" on newer builds) → Advanced → Developer mode → Create custom connector → paste the https URL (ending /mcp) + token.';
+  if(fmt==='servers'){ const o={type:'stdio',command:s.command,args:s.args}; if(s.env)o.env=s.env; return J({servers:{[name]:o}}); }
+  if(fmt==='context_servers') return J({context_servers:{[name]:s}});
+  if(fmt==='mcpNested') return J({mcp:{servers:{[name]:s}}});
+  if(fmt==='nowrap') return J({[name]:s});
+  if(fmt==='yaml_mcpServers') return 'mcpServers:\n  '+name+':\n    command: '+s.command+'\n    args:\n'+yArgs(s.args);
+  if(fmt==='yaml_mcp_servers') return 'mcp_servers:\n  '+name+':\n    command: "'+s.command+'"\n    args:\n'+yArgs(s.args);
+  if(fmt==='yaml_list') return 'mcpServers:\n  - name: '+name+'\n    type: stdio\n    command: '+s.command+'\n    args:\n'+yArgs(s.args);
+  if(fmt==='ui'||fmt==='connector'||fmt==='mcpo') return 'Command:  '+s.command+'\nArgs:     '+(s.args||[]).join('  ');
+  return J({mcpServers:{[name]:s}});
+}
+// brand glyph (monogram) + accent per client — a consistent badge, no external logos
+const CALLOSIUM_GLYPHS = {
+  'claude-code':['CC','#D97757'],'claude-desktop':['C','#D97757'],'chatgpt':['GPT','#10A37F'],'codex':['Cx','#10A37F'],'gemini':['Gm','#4285F4'],'kimi':['Ki','#6D5AE6'],'cursor':['Cu','#9CA3AF'],'windsurf':['W','#06B6D4'],
+  'vscode':['VS','#3AA0F0'],'cline':['Cl','#22C55E'],'continue':['Co','#8B5CF6'],'zed':['Z','#6366F1'],
+  'jetbrains':['JB','#F97316'],'warp':['Wp','#0EA5E9'],'lmstudio':['LM','#A855F7'],'goose':['G','#EAB308'],
+  'jan':['J','#FB7185'],'cherry':['Ch','#EF4444'],'librechat':['L','#10B981'],'openwebui':['OW','#64748B'],
+  'msty':['M','#F59E0B'],'5ire':['5','#14B8A6'],'witsy':['Wi','#A78BFA'],'chatwise':['CW','#38BDF8'],
+  'typingmind':['TM','#F472B6'],'openclaw':['OC','#F43F5E'],'hermes':['H','#EAB308'],
+};
+const CALLOSIUM_HTTP_PORT = 4321; // matches serveHttp default
+function callosiumUrlToken(spec){
+  const s = callosiumSpec(spec), a = s.args||[];
+  const token = a[a.indexOf('--token')+1] || '';
+  return { url: 'http://127.0.0.1:'+CALLOSIUM_HTTP_PORT+'/mcp', token: (a.indexOf('--token')>=0 ? token : '(pair an AI to get a token)') };
+}
+function callosiumGlyphBadge(id, size){
+  const g = CALLOSIUM_GLYPHS[id] || ['·','var(--dust)']; size = size||30;
+  return '<span style="width:'+size+'px;height:'+size+'px;flex-shrink:0;border-radius:0;background:'+g[1]+'1f;border:1px solid '+g[1]+'55;display:flex;align-items:center;justify-content:center;font-family:var(--pixel);font-weight:700;font-size:'+(size*0.4)+'px;color:'+g[1]+'">'+esc(g[0])+'</span>';
+}
+function callosiumGuideHTML(spec){
+  const selId = state.ai_guide_client || 'claude-code';
+  const c = CALLOSIUM_AI_CLIENTS.find(x=>x.id===selId) || CALLOSIUM_AI_CLIENTS[0];
+  const ut = callosiumUrlToken(spec);
+  // A per-CLIENT env-var name so connecting several AIs on one account never
+  // collides (each config references its own variable). Used by the env-var box.
+  const envName = 'CALLOSIUM_TOKEN_' + (c.id||'agent').toUpperCase().replace(/[^A-Z0-9]/g,'');
+  // client chip grid (brand glyph + name), selected highlighted
+  const chips = CALLOSIUM_AI_CLIENTS.map(x=>{ const on = x.id===c.id;
+    return '<button data-guide-client="'+x.id+'" style="display:flex;align-items:center;gap:8px;border:1px solid '+(on?'var(--synapse)':'var(--edge2)')+';background:'+(on?'rgba(255,46,136,.06)':'var(--surface)')+';border-radius:0;padding:7px 9px;cursor:pointer;text-align:left;transition:.12s">'
+      + callosiumGlyphBadge(x.id,24) + '<span style="font-family:var(--mono);font-size:11.5px;color:'+(on?'var(--starlight)':'var(--dust)')+';white-space:nowrap">'+esc(x.name)+'</span></button>';
+  }).join('');
+  const box = (num,label,copyKey,body) => '<div class="on-console" style="border:1px solid var(--edge2);border-radius:0;overflow:hidden;background:var(--console);text-align:left;margin-bottom:12px">'
+    + '<div style="display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid var(--edge);background:rgba(20,16,25,.55)"><span style="font-family:var(--pixel);font-weight:600;font-size:11px;color:var(--synapse);margin-right:8px">'+num+'</span><span style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dust)">'+label+'</span>'
+    + '<button data-guide-copy="'+copyKey+'" style="margin-left:auto;font-family:var(--mono);font-size:10.5px;text-transform:uppercase;border:1px solid var(--edge2);color:var(--dust);background:transparent;padding:5px 11px;border-radius:0;cursor:pointer">'+t('copy','نسخ')+'</button></div>'
+    + '<pre style="margin:0;padding:12px 14px;max-height:200px;overflow:auto;font-family:var(--mono);font-size:11.5px;line-height:1.6;color:var(--starlight);direction:ltr;white-space:pre-wrap;word-break:break-word">'+esc(body)+'</pre></div>';
+  const lbl = 'font-family:var(--mono);font-size:12.5px;color:var(--dust);line-height:1.6;margin:4px 2px 8px';
+  return '<div>'
+    + '<div style="font-family:var(--mono);font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:9px">'+t('which AI are you using?','أي ذكاء تستخدم؟')+'</div>'
+    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:7px;max-height:190px;overflow:auto;margin-bottom:16px;padding:2px">'+chips+'</div>'
+    + '<div style="display:flex;align-items:center;gap:9px;margin:2px 2px 8px">'+callosiumGlyphBadge(c.id,26)+'<span style="font-family:var(--pixel);font-weight:600;font-size:15px;color:var(--starlight)">'+esc(c.name)+'</span></div>'
+    + '<div style="'+lbl+'"><span style="color:var(--synapse-ink);font-weight:600">'+t('1 · add Callosium','1 · أضف كالوسيوم')+'</span> — '+esc(c.add)+'</div>'
+    // Connector-style path FIRST: a "custom MCP" form (Claude, ChatGPT, Kimi…)
+    // asks for a name + a Streamable-HTTP URL + a bearer token — exactly these.
+    + '<div style="'+lbl+'">'+t('If it shows a “custom MCP” form (Claude · ChatGPT · Kimi · Cursor…): pick <b>Streamable HTTP</b>, run  callosium mcp --http  in a terminal, then paste these three:','لو ظهر نموذج “MCP مخصص” (Claude · ChatGPT · Kimi · Cursor…): اختر <b>Streamable HTTP</b>، وشغّل  callosium mcp --http ، ثم الصق هذه الثلاثة:')+'</div>'
+    + box('◍', t('name','الاسم'), 'name', 'Callosium')
+    + box('⚇', t('MCP server URL','رابط خادم MCP'), 'url', ut.url)
+    + box('⚿', t('bearer token','رمز الوصول'), 'token', ut.token)
+    // The env-var trap: some clients (Codex, Kimi Code, and others) label the
+    // token field "bearer token env var" — it wants the NAME of an environment
+    // variable, not the token. Pasting the token there fails silently. Give the
+    // exact set-it commands + the name to enter.
+    + '<div style="'+lbl+';margin-top:2px">'+t('If that field is labelled bearer token <b>env var</b> (Codex, Kimi Code, and some others), it wants the <b>name</b> of an environment variable — not the token itself. Set the variable, then enter its name:','لو كان الحقل مكتوبًا عليه <b>متغيّر بيئة</b> لرمز الوصول (Codex و Kimi Code وغيرها)، فهو يطلب <b>اسم</b> متغيّر بيئة — لا الرمز نفسه. اضبط المتغيّر ثم أدخل اسمه:')+'</div>'
+    + box('⌗', t('set the token as an env var, then use its NAME','اضبط الرمز كمتغيّر بيئة ثم استخدم اسمه'), 'envtoken', 'Windows (PowerShell):\n  setx '+envName+' "'+ut.token+'"\n\nmacOS / Linux (add to ~/.zshrc or ~/.bashrc):\n  export '+envName+'="'+ut.token+'"\n\nThen put this NAME in the client’s "bearer token env var" field (NOT the token):\n  '+envName+'\n\nFully quit and reopen the client so it reads the variable.')
+    + '<div style="'+lbl+';margin-top:12px">'+t('Prefer a config file? Paste this where '+c.name+' keeps its MCP servers:','تفضّل ملف إعداد؟ الصق هذا حيث يحفظ '+c.name+' خوادم MCP:')+'</div>'
+    + box('#', t('MCP config','إعداد MCP'), 'cfg', callosiumCfg(spec, c.fmt))
+    // Rules step: EXPLICIT about pasting at the TOP, + a "let your AI do it" copy.
+    + '<div style="'+lbl+';margin-top:14px"><span style="color:var(--synapse-ink);font-weight:600">'+t('2 · make it automatic','2 · اجعله تلقائيًا')+'</span> — '+t('paste Callosium’s rules at the <b>very top</b> of ','الصق قواعد كالوسيوم في <b>أعلى</b> ')+'<code style="font-family:var(--mono);color:var(--starlight)">'+esc(c.rules)+'</code>'+t(', above anything already there. ',' فوق أي شيء موجود. ')+esc(c.rulesWhere)+'</div>'
+    + box('↥', t('rules — paste at the TOP of ','القواعد — الصقها في أعلى ')+esc(c.rules), 'rules', callosiumRules())
+    + '<div style="'+lbl+';margin-top:6px">'+t('Rather not open the file? Copy this and paste it into '+c.name+' — it will add the rules for you:','لا تريد فتح الملف؟ انسخ هذا والصقه في '+c.name+' — سيضيف القواعد بنفسه:')+'</div>'
+    + box('✎', t('let your AI add the rules','دع الذكاء يضيف القواعد'), 'ruleswrap', callosiumRulesWrapper(c.rules))
+    + '</div>';
+}
+function callosiumCopy(btn, text){ if(!text) return; const ok=()=>{ btn.textContent='✓'; }; if(navigator.clipboard){ navigator.clipboard.writeText(text).then(ok).catch(()=>{ try{ const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); ok(); }catch(_){} }); } }
+function callosiumGuideWire(root, spec, rerender){
+  root.querySelectorAll('[data-guide-client]').forEach(b=> b.onclick=()=>{ state.ai_guide_client = b.dataset.guideClient; if(rerender) rerender(); });
+  root.querySelectorAll('[data-guide-copy]').forEach(b=> b.onclick=()=>{
+    const c = CALLOSIUM_AI_CLIENTS.find(x=>x.id===(state.ai_guide_client||'claude-code')) || CALLOSIUM_AI_CLIENTS[0];
+    const ut = callosiumUrlToken(spec);
+    const k = b.dataset.guideCopy;
+    callosiumCopy(b, k==='rules'?callosiumRules() : k==='ruleswrap'?callosiumRulesWrapper(c.rules) : k==='name'?'Callosium' : k==='url'?ut.url : k==='token'?ut.token : callosiumCfg(spec, c.fmt));
+  });
+}
+
+// ── data ──
+async function loadOverview(){
+  try{
+    const o = await api('/api/overview');
+    state.overview = o; state.overviewFailed = false;
+    if(!o.onboarded){ return; } // boot() decides whether to show onboarding
+    const v = o.vitals||{};
+    state.targets = [v.notes||0, v.connections||0, v.health||0, v.meaningPoints||0, v.agents||0];
+    $('#brainName').textContent = o.brainName || t('your brain','دماغك');
+    const hv = v.health||0, hc = hv>=85?'var(--acid)':hv>=60?'var(--amber)':'var(--danger)';
+    const hl = hv>=85?t('healthy','سليم'):hv>=60?t('ok','جيد'):t('needs attention','يحتاج انتباه');
+    $('#healthDot').style.background = hc; $('#healthDot').style.boxShadow = '0 0 8px '+hc;
+    $('#healthLabel').textContent = '· '+hl;
+    $('#lastIndexed').textContent = t('indexed ','فُهرس ')+relTime(o.lastIndexedMs);
+    $('#railPath').textContent = o.brainPath || '~';
+    const notes = v.notes||0;
+    $('#railDisk').innerHTML = notes.toLocaleString('en-US')+' '+t('notes','ملاحظة')+' · <span style="color:var(--acid)">'+t('offline','بلا إنترنت')+'</span>';
+    $('#hudStatus').textContent = t('brain connected','الدماغ متصل')+' · '+notes.toLocaleString('en-US')+' '+t('notes','ملاحظة')+' · '+(v.agents||0)+' '+t('agents scoped','وكيل مُصرّح');
+    $('#hudDisk').textContent = (o.semantic?t('meaning on','المعنى مفعّل'):t('keyword only','كلمات مفتاحية'))+' · '+t('on this device','على هذا الجهاز');
+  }catch(e){ state.overviewFailed = true; /* offline / not ready — boot() shows a retry, not onboarding */ }
+}
+async function loadActivity(){ try{ const a = await api('/api/activity?limit=24'); state.activity = a.items||[]; }catch(e){ state.activity=[]; } }
+
+function relTime(ms){
+  if(!ms) return 'just now';
+  const s = Math.max(0,(Date.now()-ms)/1000);
+  if(s<90) return 'just now';
+  if(s<5400) return Math.round(s/60)+'m ago';
+  if(s<129600) return Math.round(s/3600)+'h ago';
+  return Math.round(s/86400)+'d ago';
+}
+
+// ── nav rail ──
+const NAV = [['overview','Overview','نظرة عامة'],['map','Brain Map','خريطة الدماغ'],['notes','Notes','الملاحظات'],['agents','Agents','الوكلاء'],['health','Health','الصحة'],['ask','Ask','اسأل'],['settings','Settings','الإعدادات']];
+function renderNav(){
+  const rtl = state.lang==='ar';
+  const navEl = $('#nav');
+  navEl.setAttribute('aria-label', t('Primary','التنقل الرئيسي'));
+  navEl.innerHTML = NAV.map(([id,en,ar])=>{
+    const on = state.screen===id;
+    const st = 'display:flex;align-items:center;gap:12px;padding:9px 11px;border-radius:0;font-family:var(--pixel);font-weight:500;font-size:15px;letter-spacing:.02em;line-height:1;margin-bottom:3px;cursor:pointer;transition:.12s;'
+      + (rtl?'flex-direction:row-reverse;text-align:right;':'')
+      + (on?'color:var(--starlight);background:var(--surface2);box-shadow:inset '+(rtl?'-3px':'3px')+' 0 0 var(--synapse);--icon:var(--synapse);':'color:var(--dust);--icon:var(--faint);');
+    const badge = (id==='settings' && state.updateBadge) ? `<span title="${t('update available','يتوفّر تحديث')}" style="width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 6px var(--amber);flex:none"></span>` : '';
+    return `<a href="#/${id}" class="navitem" data-nav="${id}"${on?' aria-current="page"':''} style="${st}">${px(id)}<span style="flex:1">${t(en,ar)}</span>${badge}</a>`;
+  }).join('');
+  navEl.querySelectorAll('[data-nav]').forEach(el=>el.addEventListener('click',e=>{ e.preventDefault(); nav(el.dataset.nav); }));
+}
+function nav(id){
+  // Tear the Brain Map down when LEAVING it (not only when re-entering), so its
+  // rAF loop, resize + window-mouseup listeners are released deterministically
+  // on exit rather than lingering for the rest of the session.
+  if(state.screen==='map' && id!=='map' && window.map_teardown){ try{ map_teardown(); }catch(e){} }
+  // Leaving Settings mid-reindex: close its EventSource so the SSE stream + its
+  // handlers don't linger (and keep re-rendering an unmounted screen).
+  if(state.screen==='settings' && id!=='settings' && window.st_teardown){ try{ st_teardown(); }catch(e){} }
+  state.screen=id; renderNav(); render();
+}
+
+// ── screens ──
+function render(){
+  const scr = $('#screen');
+  if(state.screen==='overview'){ renderOverview(); syncTitle(); }
+  else if(state.screen==='agents' && window.renderAgents){ renderAgents(); }
+  else if(state.screen==='notes' && window.renderNotes){ renderNotes(); }
+  else if(state.screen==='health' && window.renderHealth){ renderHealth(); }
+  else if(state.screen==='ask' && window.renderAsk){ renderAsk(); }
+  else if(state.screen==='settings' && window.renderSettings){ renderSettings(); }
+  else if(state.screen==='map' && window.renderMap){ renderMap(); }
+  else { scr.innerHTML = placeholder(state.screen); }
+}
+
+function placeholder(id){
+  const label = (NAV.find(n=>n[0]===id)||['',''])[1];
+  return `<div style="margin-bottom:20px;animation:rise .4s ease both">
+      <h1 style="font-family:var(--pixel);font-weight:700;font-size:42px;letter-spacing:.01em;line-height:1.02">${label.toLowerCase()}.<span style="color:var(--synapse);animation:blink 1s step-end infinite">_</span></h1>
+      <div style="font-family:var(--mono);font-size:13px;color:var(--faint);margin-top:10px">designing this screen next · <span style="color:var(--acid)">wired to your real brain in the next stage</span></div>
+    </div>
+    <div style="border:1px solid var(--edge2);border-radius:0;background:var(--surface);overflow:hidden">
+      <div style="padding:9px 14px;border-bottom:1px solid var(--edge);background:var(--surface2);font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dust)">${label}</div>
+      <div style="padding:40px 30px;text-align:center;color:var(--dust);font-size:14px">
+        <div style="width:44px;height:44px;border:1px solid var(--edge2);border-radius:0;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;background:var(--surface2);--icon:var(--synapse)">${px(id,18)}</div>
+        this is your <b style="color:var(--starlight)">${label}</b> screen from the design — it's next in the rebuild.<br>
+        <span style="font-family:var(--mono);font-size:11.5px;color:var(--faint)">the shell + Overview are the faithful port of your Claude Design.</span>
+      </div>
+    </div>`;
+}
+
+// ── kinetic hero subtitle — 30 consumer-first feature lines, rotated one at a
+// time under "your brain is alive." Plain benefit sentences, no jargon. ──
+const KINETIC = [
+  "Your AI forgets everything the second you close the tab. This doesn't.",
+  "Tell it once. It remembers for good.",
+  "Every AI you use, sharing one memory — yours.",
+  "It answers only from your own notes. It never makes things up.",
+  "Ask what you knew a year ago. It still knows.",
+  "Your thoughts stay on your computer. No cloud, no account, no upload.",
+  "Switch from ChatGPT to Claude — your memory comes with you.",
+  "It shows you the exact note every answer came from.",
+  "No more re-explaining yourself to a blank chat each morning.",
+  "Your notes are plain files. Delete the app, keep everything.",
+  "It quietly connects ideas you'd forgotten you wrote.",
+  "One brain your whole desk of AIs can read.",
+  "You decide what each AI is allowed to see.",
+  "Your private journal stays private — off for every AI by default.",
+  "It always knows who wrote what: you, or which AI.",
+  "Nothing leaves this device unless you say so.",
+  "Search your whole mind in the time it takes to type.",
+  "It works offline. On a plane, in a tunnel, anywhere.",
+  "Give a new AI your years of context in one connection.",
+  "If it's not in your brain, it tells you — instead of guessing.",
+  "The more you write, the smarter every AI you own gets.",
+  "Your second brain, finally all in one place.",
+  "Remember every decision — and why you made it.",
+  "No lock-in. It's your data, in your folders, forever.",
+  "It reads your notes the way you filed them. No setup.",
+  "Ask in English or العربية. It answers in kind.",
+  "It catches the note that contradicts the one you just wrote.",
+  "Built to outlive any single AI app.",
+  "Your memory, portable across every tool you'll ever try.",
+  "One place for everything you know. Every AI plugged in.",
+];
+let kineticIx = 0, kineticIv = null;
+function startKinetic(){
+  const el = document.getElementById('heroKinetic');
+  if(!el) return;
+  el.textContent = KINETIC[kineticIx % KINETIC.length]; // paint the current line at once
+  if(kineticIv) return; // a cycle is already running; it re-queries #heroKinetic by id
+  const step = () => {
+    const e = document.getElementById('heroKinetic');
+    // self-clean when the user leaves Overview (its node is gone / screen changed)
+    if(!e || state.screen !== 'overview'){ clearInterval(kineticIv); kineticIv = null; return; }
+    if(window.__reduceMotion){ kineticIx = (kineticIx+1) % KINETIC.length; e.textContent = KINETIC[kineticIx]; return; }
+    e.style.transition = 'opacity .3s ease, transform .3s ease';
+    e.style.opacity = '0'; e.style.transform = 'translateY(-7px)';
+    setTimeout(() => {
+      const e2 = document.getElementById('heroKinetic'); if(!e2) return;
+      kineticIx = (kineticIx+1) % KINETIC.length;
+      e2.textContent = KINETIC[kineticIx];
+      e2.style.transition = 'none'; e2.style.opacity = '0'; e2.style.transform = 'translateY(7px)';
+      requestAnimationFrame(() => { e2.style.transition = 'opacity .3s ease, transform .3s ease'; e2.style.opacity = '1'; e2.style.transform = 'none'; });
+    }, 320);
+  };
+  kineticIv = setInterval(step, 4200);
+}
+
+function renderOverview(){
+  const o = state.overview; if(!o){ $('#screen').innerHTML = '<div style="font-family:var(--mono);color:var(--faint);padding:20px">connecting to your brain…</div>'; return; }
+  const v = o.vitals||{};
+  const hv = v.health||0;
+  const healthWord = hv>=90?'nominal':hv>=70?'ok':'needs attention';
+  const hCol = hv>=85?'var(--acid)':hv>=60?'var(--amber)':'var(--danger)';
+  const hLabel = hv>=85?'healthy':hv>=60?'ok':'needs attention';
+
+  const tiles = VIT.map((vt,i)=>{
+    const tgt = state.targets[i]||0;
+    const hero = !!vt.hero;
+    const heroLow = hero && hv<85;
+    const numColor = hero?(heroLow?(hv<60?'var(--danger)':'var(--amber)'):'var(--synapse)'):'var(--starlight)';
+    const label = i===2?('brain health · '+healthWord) : i===4?('agents · '+tgt+' connected') : vt.label;
+    const tileStyle = 'position:relative;border-radius:0;padding:13px 14px 9px;display:flex;flex-direction:column;min-height:158px;overflow:hidden;'
+      + (hero?`border:1px solid ${heroLow?'rgba(255,180,84,.5)':'rgba(255,46,136,.5)'};background:linear-gradient(180deg,${heroLow?'rgba(255,180,84,.07)':'rgba(255,46,136,.07)'},var(--surface) 62%)`:'border:1px solid var(--edge2);background:var(--surface)');
+    // Press Start 2P is single-weight (400) and optically ~1.5x taller than Pixelify,
+    // so drop the bold and size down to keep the tiles from overflowing.
+    const numStyle = 'font-family:var(--pixelnum);line-height:1;font-variant-numeric:tabular-nums;'+(hero?`font-size:34px;color:${numColor}`:`font-size:22px;color:${numColor}`);
+    const core = hero?`<span id="vpulse" style="width:9px;height:9px;flex-shrink:0;background:${numColor};box-shadow:0 0 9px ${numColor}"></span>`:'';
+    return `<div class="${hero?'vitals-hero ':''}vitals-tile" style="${tileStyle}">
+        <div style="display:flex;align-items:center;gap:9px;height:44px">${core}<span id="vnum${i}" style="${numStyle}">0</span><span id="vdelta${i}" style="font-family:var(--mono);font-size:11px;font-weight:500;opacity:0;white-space:nowrap"></span></div>
+        <div style="font-family:var(--mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;margin-top:3px;color:${hero?'var(--dust)':'var(--faint)'}">${label}</div>
+        <canvas class="vspark" id="spark${i}" data-spark="${i}" style="width:100%;height:38px;margin-top:auto;image-rendering:pixelated;display:block;color:var(--starlight)"></canvas>
+      </div>`;
+  }).join('');
+
+  const parts = Object.entries(o.partitions||{}).filter(([n])=>n!=='(root)').sort((a,b)=>b[1]-a[1]);
+  const totalNotes = (v.notes||0).toLocaleString('en-US');
+  const partChips = parts.map(([name,count])=>{
+    const locked = name==='Private', managed = name==='System';
+    const dim = locked||managed;
+    return `<span class="chip" style="font-family:var(--mono);font-size:11.5px;border-radius:0;padding:5px 11px;cursor:default;display:inline-flex;align-items:center;gap:2px;border:1px solid var(--edge2);background:transparent;color:${dim?'var(--faint)':'var(--dust)'}">${esc(name)} <b style="font-weight:600;color:${dim?'var(--faint)':'var(--synapse-ink)'}">${count}</b>${locked?'<span style="margin-left:3px;color:var(--danger);font-size:9px">🔒</span>':''}</span>`;
+  }).join('');
+
+  // Per-agent action feed: "[ago] <agent> <verb> <note> · <partition>". Action lines come from the
+  // audit log (what each connected AI / the owner DID); a plain "changed" line is an edit made
+  // OUTSIDE Callosium (Obsidian/sync) with no attributed agent. Verb is colour-coded by kind.
+  const ACT_META = {
+    write:    { verb:'wrote',      col:'var(--acid)' },
+    append:   { verb:'appended',   col:'var(--acid)' },
+    remember: { verb:'remembered', col:'var(--acid)' },
+    move:     { verb:'moved',      col:'var(--amber)' },
+    archive:  { verb:'archived',   col:'var(--danger)' },
+    read:     { verb:'read',       col:'var(--synapse-ink)' },
+    recall:   { verb:'recalled',   col:'var(--synapse-ink)' },
+  };
+  const actFilter = state.actFilter || 'all';   // which AGENT
+  const opFilter = state.opFilter || 'all';      // which ACTION (write/append/read/…)
+  // 'all' shows everything; the agent filter narrows to one AI. The action filter
+  // narrows to one verb — or to 'changed', the anonymous external edits that carry
+  // no agent/action (an AI or tool that touched the files outside Callosium's write
+  // path). The agent filter still drops those external edits (no agent to match).
+  const shownActs = state.activity.filter(it=>{
+    if (actFilter!=='all' && !(it.kind==='action' && it.agentId===actFilter)) return false;
+    if (opFilter!=='all') {
+      if (opFilter==='changed' ? it.kind==='action' : !(it.kind==='action' && it.action===opFilter)) return false;
+    }
+    return true;
+  });
+  // newest at the BOTTOM (terminal / tail -f convention)
+  const logLines = shownActs.slice().reverse().map(it=>{
+    const m = it.kind==='action' ? (ACT_META[it.action] || {verb:esc(it.action),col:'var(--dust)'}) : {verb:'changed',col:'var(--acid)'};
+    const who = it.kind==='action' ? `<span style="color:var(--synapse-ink);flex-shrink:0;max-width:22ch;overflow:hidden;text-overflow:ellipsis">${esc(it.agent||it.agentId||'agent')}</span>` : '';
+    // a recall with no note hit shows its query instead of a note name
+    const label = it.name ? esc(it.name) : (it.detail ? '"'+esc(String(it.detail).slice(0,48))+'"' : '—');
+    const partTail = it.partition ? `<span style="color:var(--faint);flex-shrink:0">· ${esc(it.partition)}</span>` : '';
+    return `
+      <button type="button" class="logline actjump" data-actpath="${esc(it.path||'')}" title="${it.path?'open this note':''}" style="display:flex;gap:9px;white-space:nowrap;animation:rise .3s ease both;border-radius:0;padding:1px 6px;margin:0 -6px;transition:.1s;cursor:${it.path?'pointer':'default'};width:100%;background:none;border:0;font-family:inherit;font-size:inherit;text-align:left">
+        <span style="color:var(--faint);flex-shrink:0">[${esc(it.ago)}]</span>
+        ${who}
+        <span style="color:${m.col};flex-shrink:0">${m.verb}</span>
+        <span style="color:var(--starlight);overflow:hidden;text-overflow:ellipsis">${label}</span>
+        <span style="flex:1"></span>
+        ${partTail}
+      </button>`;
+  }).join('');
+  // --agent filter row: click a pill to see only that AI's actions (or "all"). Pills are the UNION
+  // of connected agents and any agent that appears in the feed (so an agent that acted but is no
+  // longer paired is still filterable), each labelled by its display name and filtered by its id.
+  const agentLabel = new Map();
+  (o.agents||[]).forEach(a=> agentLabel.set(a.id, a.displayName||a.id));
+  state.activity.forEach(it=>{ if(it.kind==='action' && it.agentId && !agentLabel.has(it.agentId)) agentLabel.set(it.agentId, it.agent||it.agentId); });
+  const agentPills = [['all','all'], ...agentLabel.entries()];
+  const filterRow = `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid var(--feed-line)">
+      <span style="font-family:var(--mono);font-size:12px;color:var(--faint);flex-shrink:0">--agent</span>
+      ${agentPills.map(([id,label])=>{ const on=(state.actFilter||'all')===id; return `<button type="button" class="actfilter" data-actfilter="${esc(id)}" style="font-family:var(--mono);font-size:12px;padding:4px 11px;border-radius:0;white-space:nowrap;cursor:pointer;border:1px solid ${on?'var(--synapse)':'var(--edge)'};color:${on?'var(--synapse)':'var(--dust)'};background:${on?'rgba(255,46,136,.08)':'transparent'}">${esc(label)}</button>`; }).join('')}
+      ${agentLabel.size===0?'<span style="font-family:var(--mono);font-size:10px;color:var(--faint)">· connect an AI to see its activity</span>':''}
+    </div>`;
+  // --action filter row: click a verb to see only that kind of action (write,
+  // append, read, move, …) or 'changed' for the anonymous external edits. Pills are
+  // the UNION of what actually appears in the feed, so the row only shows kinds that
+  // have happened — attributed verbs from AIs writing THROUGH Callosium, plus a
+  // 'changed' pill whenever there are edits Callosium only saw on disk.
+  const opLabel = new Map();
+  state.activity.forEach(it=>{
+    if (it.kind==='action' && it.action) { if (!opLabel.has(it.action)) opLabel.set(it.action, (ACT_META[it.action]||{verb:it.action}).verb); }
+    else if (!opLabel.has('changed')) opLabel.set('changed', 'changed');
+  });
+  const opPills = [['all','all'], ...opLabel.entries()];
+  const opFilterRow = opLabel.size ? `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid var(--feed-line)">
+      <span style="font-family:var(--mono);font-size:12px;color:var(--faint);flex-shrink:0">--action</span>
+      ${opPills.map(([id,label])=>{ const on=(state.opFilter||'all')===id; return `<button type="button" class="opfilter" data-opfilter="${esc(id)}" style="font-family:var(--mono);font-size:12px;padding:4px 11px;border-radius:0;white-space:nowrap;cursor:pointer;border:1px solid ${on?'var(--synapse)':'var(--edge)'};color:${on?'var(--synapse)':'var(--dust)'};background:${on?'rgba(255,46,136,.08)':'transparent'}">${esc(label)}</button>`; }).join('')}
+    </div>` : '';
+
+  const qa = [ {ic:'plus',label:'link an AI',to:'agents',hot:true}, {ic:'ask',label:'ask your brain',to:'ask'}, {ic:'map',label:'open brain map',to:'map'}, {ic:'health',label:'check health',to:'health'} ]
+    .map(q=>{
+      const st='font-family:var(--pixel);font-weight:500;font-size:13px;letter-spacing:.04em;text-transform:uppercase;padding:10px 15px;border-radius:0;cursor:pointer;display:inline-flex;align-items:center;gap:8px;transition:.14s;background:transparent;'
+        +(q.hot?'border:1px solid var(--synapse);color:var(--synapse-ink)':'border:1px solid var(--edge2);color:var(--dust)');
+      return `<button class="${q.hot?'qa-hot':'qa'}" data-nav="${q.to}" style="${st}">${px(q.ic,15)}<span>${q.label}</span></button>`;
+    }).join('');
+
+  $('#screen').innerHTML = `
+    <div style="margin-bottom:22px;animation:rise .4s ease both">
+      <h1 id="hero" style="font-family:var(--pixel);font-weight:700;font-size:42px;letter-spacing:.01em;line-height:1.02;cursor:pointer;user-select:none;min-height:44px">your brain is alive.<span style="color:var(--synapse);animation:blink 1s step-end infinite">_</span></h1>
+      <div id="heroKinetic" style="font-family:var(--grot);font-weight:500;font-size:17px;color:var(--starlight);margin-top:13px;min-height:24px;line-height:1.4;max-width:64ch">${esc(KINETIC[kineticIx % KINETIC.length])}</div>
+      <div style="font-family:var(--mono);font-size:12.5px;color:var(--faint);margin-top:8px">indexed ${relTime(o.lastIndexedMs)} · <span style="color:${hCol}">${hLabel}</span> · everything on this device</div>
+    </div>
+
+    <div style="font-family:var(--pixel);font-weight:600;font-size:15px;letter-spacing:.05em;color:var(--dust);text-transform:uppercase;margin-bottom:12px">Vitals</div>
+    <div class="vitals-grid" style="display:grid;grid-template-columns:1fr 1fr 1.42fr 1fr 1fr;gap:12px;margin-bottom:20px">${tiles}</div>
+
+    <div class="ov-panels" style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="ov-feed" style="border:1px solid var(--edge2);border-radius:0;overflow:hidden;background:var(--feed-bg)">
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--feed-line);background:var(--feed-head)">
+          <span style="display:flex;gap:6px"><i style="width:9px;height:9px;border-radius:50%;background:var(--danger);opacity:.8"></i><i style="width:9px;height:9px;border-radius:50%;background:var(--amber);opacity:.8"></i><i style="width:9px;height:9px;border-radius:50%;background:var(--acid);opacity:.8"></i></span>
+          <span style="font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--dust)">recent activity</span>
+          <span style="display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;color:var(--feed-live);margin-left:2px"><span style="width:6px;height:6px;border-radius:50%;background:var(--acid);animation:dotpulse 1.2s infinite"></span>live</span>
+        </div>
+        ${filterRow}
+        ${opFilterRow}
+        <div id="termBody" style="padding:12px 15px;font-family:var(--mono);font-size:12.5px;line-height:1.9;height:196px;overflow:auto;position:relative">
+          <div style="color:var(--faint)"><span style="color:var(--acid)">brain</span>@you ~ % tail -f activity</div>
+          ${logLines || '<div style="color:var(--faint);margin-top:6px">no recent activity yet</div>'}
+          <div style="color:var(--dust);margin-top:5px"><span style="color:var(--acid)">brain</span>@you ~ % <span style="display:inline-block;width:8px;height:14px;background:var(--synapse);vertical-align:text-bottom;animation:blink 1s steps(1) infinite"></span></div>
+        </div>
+      </div>
+
+      <div style="border:1px solid var(--edge2);border-radius:0;overflow:hidden;background:var(--surface)">
+        <div style="display:flex;align-items:center;padding:9px 14px;border-bottom:1px solid var(--edge);background:var(--surface2)"><span style="font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--dust)">partitions</span><span style="margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--faint)">${parts.length} folders</span></div>
+        <div style="padding:14px 15px 16px">
+          <div style="font-family:var(--mono);font-size:16px;color:var(--dust);margin-bottom:12px;font-weight:600">${totalNotes} notes · on this device</div>
+          <div style="display:flex;flex-wrap:wrap;gap:7px">${partChips}</div>
+          <div style="font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:14px;line-height:1.6"><span style="color:var(--danger)">🔒</span> Private is off for every AI by default — grant it to one in Agents.</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      ${qa}
+      <span style="margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--faint)">says <span style="color:var(--dust)">"not in the brain"</span> when it doesn't know</span>
+    </div>`;
+
+  $('#screen').querySelectorAll('[data-nav]').forEach(el=>el.onclick=()=>nav(el.dataset.nav));
+  // recent-activity line → open that note in Notes and flash it (the change)
+  $('#screen').querySelectorAll('.actjump[data-actpath]').forEach(el=>{
+    const p = el.dataset.actpath;
+    if(p){ el.onclick=()=>{ state.notes_open=p; state.notes_flash=p; nav('notes'); }; }
+    el.addEventListener('mouseenter',()=>{ el.style.background='rgba(255,46,136,.06)'; });
+    el.addEventListener('mouseleave',()=>{ el.style.background='transparent'; });
+  });
+  // --agent filter pills → show only that agent's actions (re-renders the feed in place)
+  $('#screen').querySelectorAll('.actfilter[data-actfilter]').forEach(el=>{
+    el.onclick=()=>{ state.actFilter = el.dataset.actfilter; renderOverview(); };
+  });
+  // --action filter pills → show only that verb (write/append/read/…)
+  $('#screen').querySelectorAll('.opfilter[data-opfilter]').forEach(el=>{
+    el.onclick=()=>{ state.opFilter = el.dataset.opfilter; renderOverview(); };
+  });
+  const tb=document.getElementById('termBody'); if(tb) tb.scrollTop=tb.scrollHeight; // tail -f: pin to newest
+  sparksBind(); // re-acquire the rebuilt canvases + make sure the shared loop runs
+  animateNums(state.targets);
+  startKinetic();
+}
+
+function renderOnboard(){
+  $('#screen').innerHTML = `<div style="max-width:520px;margin:8vh auto 0;text-align:center">
+    <h1 style="font-family:var(--pixel);font-weight:700;font-size:34px;margin-bottom:12px">connect your brain.</h1>
+    <p style="color:var(--dust);font-size:14px">start the dashboard with <code style="font-family:var(--mono);color:var(--synapse)">callosium serve --brain &lt;folder&gt;</code>. the onboarding picker is coming in this rebuild.</p>
+  </div>`;
+}
+
+// ── vitals motion (Direction 1): every motion is a consequence of data. ──
+// A number moves ONLY when its value changed since the last settled render;
+// the 20s live refresh with no changes produces zero motion. First load counts
+// up from 0 (that IS a change). Reduced motion collapses all of it to instant.
+let numIv=null, settledNums=null;
+function paintNums(){
+  state.nums.forEach((n,i)=>{ const el=document.getElementById('vnum'+i); if(el) el.textContent = VIT[i].suf?(n+VIT[i].suf):n.toLocaleString('en-US'); });
+}
+function fmtDelta(d,i){ const a=Math.abs(d); return (d>0?'+':'−')+a.toLocaleString('en-US')+(VIT[i].suf||''); }
+function showDelta(i, delta){
+  const el=document.getElementById('vdelta'+i); if(!el) return;
+  el.textContent = fmtDelta(delta,i);
+  el.style.color = delta>0 ? 'var(--acid)' : 'var(--amber)';
+  if(el._t) clearTimeout(el._t);
+  if(window.__reduceMotion){ el.style.transition='none'; el.style.opacity='1'; el._t=setTimeout(()=>{ el.style.opacity='0'; },4000); return; }
+  el.style.transition='opacity .2s steps(2)'; el.style.opacity='1';
+  el._t=setTimeout(()=>{ el.style.transition='opacity .5s ease'; el.style.opacity='0'; },4000);
+}
+function animateNums(targets){
+  clearInterval(numIv);
+  const first = !settledNums;
+  const from = first ? targets.map(()=>0) : settledNums.slice();
+  const changed = targets.map((tg,i)=> tg!==from[i]);
+  state.nums = from.slice(); paintNums(); // repaint pre-change values: the DOM was just rebuilt with "0"s
+  const rm = !!window.__reduceMotion;
+  if(rm){
+    state.nums = targets.slice(); settledNums = targets.slice(); paintNums();
+    changed.forEach((c,i)=>{ if(c && !first) showDelta(i, targets[i]-from[i]); });
+    return;
+  }
+  if(!changed.some(Boolean)){ state.nums = targets.slice(); settledNums = targets.slice(); return; }
+  // stepped count-up: 10 quantized steps over ~0.5s, only on changed tiles
+  const STEPS=10; let step=0;
+  numIv=setInterval(()=>{
+    step++;
+    state.nums = targets.map((tg,i)=> changed[i] ? Math.round(from[i]+(tg-from[i])*Math.min(1,step/STEPS)) : tg);
+    paintNums();
+    if(step>=STEPS){ clearInterval(numIv); numIv=null; state.nums=targets.slice(); paintNums(); }
+  },55);
+  changed.forEach((c,i)=>{
+    if(!c) return;
+    // the star field retargets itself: counts are read live from state.targets
+    if(VIT[i].hero){ const sq=document.getElementById('vpulse'); if(sq){ sq.style.animation='none'; void sq.offsetWidth; sq.style.animation='hudpulse 1.5s ease-in-out 1'; } }
+    if(!first) showDelta(i, targets[i]-from[i]);
+  });
+  settledNums = targets.slice();
+}
+
+// ── vital sparks: a per-tile constellation field, continuously alive. ──
+// Star count = the number itself (sparkCount, same normalization as the old
+// gauge). The layout is deterministic per tile (seeded), so re-renders never
+// jitter. Every star twinkles on its own sine alpha loop (0.12..1.0, seeded
+// period 0.9-2.2s, seeded phase, so the field shimmers and never syncs); a
+// few 6px anchor stars per tile give the eye something to hold. Every ~2.5-4s
+// one random active star FLARES: snaps to full brightness with a synapse tint
+// for ~150ms, then decays in 4 quantized steps over ~0.6s (one flare per tile
+// at a time). Every ~2.5-4s a synapse pulse also travels a straight line
+// between two stars (~0.5s, tight low alpha). ONE shared rAF drives all five
+// canvases; it pauses on document.hidden and when the vitals grid scrolls out
+// of view. On a count change, stars crossfade to the new count over ~0.6s
+// (fades integrate toward live targets every frame), then twinkle continues.
+// Reduced motion: the field is drawn once, static, no loop.
+function sparkRng(seed){ let a=seed>>>0; return ()=>{ a|=0; a=a+0x6D2B79F5|0; let t=Math.imul(a^a>>>15,1|a); t=t+Math.imul(t^t>>>7,61|t)^t; return ((t^t>>>14)>>>0)/4294967296; }; }
+const sparkStates=[], sparkCvs=[];
+window.__sparksTicks=0;   // probe hook: must not advance while hidden/off-view
+window.__sparkTravels=[0,0,0,0,0]; // probe hook: traveler fires per tile
+window.__sparkFlares=[0,0,0,0,0];  // probe hook: flare fires per tile
+function sparkState(i){
+  if(sparkStates[i]) return sparkStates[i];
+  const rng=sparkRng(1337+i*7919), slots=[], sizes=[], periods=[], phases=[];
+  // sizes are backing-store px at half resolution: 1-2 => 2-4 screen px, and
+  // the first 4 seeded slots are anchors at 3 => 6 screen px.
+  for(let k=0;k<MAX_STARS;k++){ slots.push([0.05+0.9*rng(), 0.18+0.64*rng()]); sizes.push(k<4?3:(rng()<0.65?2:1)); periods.push(0.9+1.3*rng()); phases.push(rng()); }
+  const perm=Array.from({length:MAX_STARS},(_,k)=>k);
+  for(let k=MAX_STARS-1;k>0;k--){ const j=(rng()*(k+1))|0; const t=perm[k]; perm[k]=perm[j]; perm[j]=t; }
+  // a few hairline links between near neighbors (reference size ~110x19 px)
+  const links=[], seen=new Set();
+  for(let k=0;k<MAX_STARS;k++){
+    let best=-1,bd=1e9;
+    for(let j=0;j<MAX_STARS;j++){ if(j===k) continue; const dx=(slots[k][0]-slots[j][0])*110, dy=(slots[k][1]-slots[j][1])*19, d=dx*dx+dy*dy; if(d<bd){bd=d;best=j;} }
+    const key=Math.min(k,best)+'-'+Math.max(k,best);
+    if(!seen.has(key) && Math.sqrt(bd)<28){ seen.add(key); links.push([k,best]); }
+  }
+  return sparkStates[i]={ slots, sizes, periods, phases, perm, links,
+    fades:new Float32Array(MAX_STARS), alphas:new Float32Array(MAX_STARS),
+    travAt:0, trav:null, flareAt:900+Math.random()*1800, flare:null };
+}
+function sparkActiveCount(i){ return sparkCount(VIT[i], state.targets[i]||0); }
+window.__sparkCounts=()=>VIT.map((_,i)=>sparkActiveCount(i));
+window.__sparkAlpha=(i,k)=>{ const st=sparkStates[i]; return st?st.alphas[k]:0; };
+window.__sparkVisible=(i)=>{ const st=sparkStates[i]; if(!st) return 0; let n=0; for(const f of st.fades) if(f>0.5) n++; return n; };
+// live flare info for probes: which star is flaring, where it sits, and its age
+// (ft<150ms is the full-brightness snap; 150-750ms is the decay)
+window.__sparkFlareInfo=(i)=>{ const st=sparkStates[i], cv=sparkCvs[i]; if(!st||!st.flare||!cv) return null; const k=st.flare.k; return { k, x:Math.round(st.slots[k][0]*cv.width), y:Math.round(st.slots[k][1]*cv.height), ft:performance.now()-st.flare.t0 }; };
+function sparkSizeCanvas(cv){
+  const w=Math.max(24,Math.floor((cv.offsetWidth||150)/2)), h=Math.max(12,Math.floor((cv.offsetHeight||38)/2));
+  if(cv.width!==w||cv.height!==h){ cv.width=w; cv.height=h; }
+}
+function sparkColors(cv){
+  if(cv._cols) return cv._cols;
+  const probe=document.createElement('i'); probe.style.color='var(--synapse)'; $('#app').appendChild(probe);
+  const syn=getComputedStyle(probe).color; probe.remove();
+  cv._cols={ star:getComputedStyle(cv).color, syn };
+  return cv._cols;
+}
+function sparkDraw(i, now, dt, instant){
+  const cv=sparkCvs[i]; if(!cv||!cv.isConnected) return;
+  sparkSizeCanvas(cv);
+  const st=sparkState(i), g=cv.getContext('2d'), W=cv.width, H=cv.height;
+  const cols=sparkColors(cv), count=sparkActiveCount(i);
+  const t=instant?0:now/1000, step=dt/600; // fade rate: full crossfade in ~0.6s; rm draws are deterministic (t=0)
+  g.clearRect(0,0,W,H);
+  // integrate per-star fades toward live targets (active = first count of perm)
+  const active=st.perm.slice(0,count);
+  for(let k=0;k<MAX_STARS;k++){
+    const tgt=active.indexOf(k)>=0?1:0;
+    if(instant) st.fades[k]=tgt;
+    else st.fades[k]+=Math.max(-step,Math.min(step,tgt-st.fades[k]));
+  }
+  // links first, under the stars: 1px hairlines at very low alpha
+  g.strokeStyle=cols.star; g.lineWidth=1;
+  for(const [a,b] of st.links){
+    const al=0.09*Math.min(st.fades[a],st.fades[b]); if(al<0.004) continue;
+    g.globalAlpha=al;
+    g.beginPath(); g.moveTo(Math.round(st.slots[a][0]*W)+.5,Math.round(st.slots[a][1]*H)+.5); g.lineTo(Math.round(st.slots[b][0]*W)+.5,Math.round(st.slots[b][1]*H)+.5); g.stroke();
+  }
+  // flare scheduling: one random active star pops every ~2.5-4s
+  if(!instant){
+    if(!st.flare && now>=st.flareAt && active.length){ st.flare={ k:active[(Math.random()*active.length)|0], t0:now }; window.__sparkFlares[i]++; }
+    if(st.flare && (now-st.flare.t0)>=750){ st.flare=null; st.flareAt=now+2500+Math.random()*1500; }
+  }
+  // stars: per-star twinkle, alpha 0.12..1.0, seeded period + phase
+  for(let k=0;k<MAX_STARS;k++){
+    const f=st.fades[k]; if(f<=0.003){ st.alphas[k]=0; continue; }
+    const tw=0.12+0.88*(0.5-0.5*Math.cos(2*Math.PI*(t/st.periods[k]+st.phases[k])));
+    let a=f*tw, col=cols.star;
+    if(st.flare && k===st.flare.k){
+      const ft=now-st.flare.t0;
+      if(ft<150){ a=1; }                            // snap: full brightness
+      else { const lvl=1-Math.floor((ft-150)/150)/4; a=Math.max(a, lvl*0.9); } // 4 quantized decay steps over 0.6s
+      col=cols.syn;
+    }
+    st.alphas[k]=a;
+    g.globalAlpha=a; g.fillStyle=col;
+    g.fillRect(Math.round(st.slots[k][0]*W),Math.round(st.slots[k][1]*H),st.sizes[k],st.sizes[k]);
+  }
+  // traveler: one synapse pulse every ~2.5-4s between two active stars
+  if(!instant){
+    if(!st.trav && now>=st.travAt && active.length>=2){
+      const a=active[(Math.random()*active.length)|0]; let b=a;
+      while(b===a) b=active[(Math.random()*active.length)|0];
+      st.trav={a,b,t0:now}; window.__sparkTravels[i]++;
+    }
+    if(st.trav){
+      const p=(now-st.trav.t0)/500;
+      if(p>=1){ st.trav=null; st.travAt=now+2500+Math.random()*1500; }
+      else{
+        const [ax,ay]=st.slots[st.trav.a],[bx,by]=st.slots[st.trav.b];
+        g.fillStyle=cols.syn;
+        for(let tr=0;tr<3;tr++){
+          const pp=Math.max(0,p-tr*0.09), x=Math.round((ax+(bx-ax)*pp)*W), y=Math.round((ay+(by-ay)*pp)*H);
+          g.globalAlpha=(tr===0?0.7:tr===1?0.35:0.16)*(1-p*0.4);
+          g.fillRect(x,y,2,2);
+        }
+      }
+    }
+  }
+  g.globalAlpha=1;
+}
+let sparkRunning=false, sparkInView=true, sparkObs=null, sparkWired=false, sparkLast=0;
+function sparksPlay(){
+  if(sparkRunning||window.__reduceMotion||document.hidden||!sparkInView) return;
+  sparkRunning=true; sparkLast=performance.now();
+  requestAnimationFrame(sparksStep);
+}
+function sparksPause(){ sparkRunning=false; }
+function sparksStep(now){
+  if(!sparkRunning) return;
+  window.__sparksTicks++;
+  const dt=Math.min(100,now-sparkLast); sparkLast=now;
+  for(let i=0;i<VIT.length;i++) sparkDraw(i,now,dt,false);
+  requestAnimationFrame(sparksStep);
+}
+function sparksBind(){
+  VIT.forEach((_,i)=>{ sparkCvs[i]=document.getElementById('spark'+i); if(sparkCvs[i]) sparkCvs[i]._cols=null; });
+  if(!sparkWired){
+    sparkWired=true;
+    document.addEventListener('visibilitychange',()=>{ if(document.hidden) sparksPause(); else sparksPlay(); });
+    if('IntersectionObserver' in window){
+      sparkObs=new IntersectionObserver(es=>{ sparkInView=!!(es[0]&&es[0].isIntersecting); if(sparkInView) sparksPlay(); else sparksPause(); });
+    }
+  }
+  const grid=document.querySelector('.vitals-grid');
+  if(sparkObs && grid){ sparkObs.disconnect(); sparkObs.observe(grid); }
+  if(window.__reduceMotion){ sparksPause(); const now=performance.now(); for(let i=0;i<VIT.length;i++) sparkDraw(i,now,0,true); }
+  else sparksPlay();
+}
+
+// ── typewriter hero (Overview) ──
+const FACTS = ["everything lives on your disk.","no cloud. no account. no upload.","it works with the wi-fi off.","your notes stay plain markdown.","every AI shares one memory.","what one AI learns, they all remember.","switch AIs — your memory follows.","you pick what each AI can see.","grant a folder, revoke it just as fast.","Private stays yours alone.","every AI write is signed.","every answer shows its sources.","it never invents an answer.","it says “not in the brain” when unsure.","ask it anything you've saved.","recall lands in about 30ms.","type it wrong, still find it right.","finds the note you forgot.","it files new notes into place.","links ideas across years of notes.","catches duplicates before they pile up.","remembers last week, not just this chat.","edit in any app you like.","re-index runs in the background.","bilingual: english and arabic.","one paste connects a new AI.","no subscription to read your own mind.","delete Callosium, keep every note.","nothing ever leaves this device.","your knowledge, finally talking to itself."];
+let tyTimer=null, tySeq=[], tyIdx=0, tyPhase='hold', tyPos=0;
+function heroEl(){ return document.getElementById('hero'); }
+function setHero(txt){ const h=heroEl(); if(h) h.firstChild.nodeValue = txt; }
+function syncTitle(){
+  clearTimeout(tyTimer);
+  if(state.screen!=='overview') return;
+  const h=heroEl(); if(!h) return;
+  h.onclick = ()=>syncTitle();
+  tySeq = ["your brain is alive.", ...FACTS]; tyIdx=0; tyPhase='hold'; tyPos=tySeq[0].length;
+  setHero(tySeq[0]);
+  // reduced motion: the anchor line stays put, no type/delete cycle
+  if(window.__reduceMotion) return;
+  tyTimer = setTimeout(typeStep, 2900);
+}
+function typeStep(){
+  if(state.screen!=='overview') return;
+  if(window.__reduceMotion) return; // toggled on mid-cycle: freeze where we are
+  const target = tySeq[tyIdx%tySeq.length], anchor = (tyIdx%tySeq.length)===0;
+  if(tyPhase==='type'){
+    tyPos++; setHero(target.slice(0,tyPos));
+    if(tyPos>=target.length){ tyPhase='hold'; tyTimer=setTimeout(typeStep, anchor?2900:1750); }
+    else tyTimer=setTimeout(typeStep,36);
+  } else if(tyPhase==='hold'){ tyPhase='del'; tyTimer=setTimeout(typeStep,30); }
+  else { tyPos--; setHero(target.slice(0,Math.max(0,tyPos)));
+    if(tyPos<=0){ tyIdx++; tyPhase='type'; tyTimer=setTimeout(typeStep,340); }
+    else tyTimer=setTimeout(typeStep,20); }
+}
+
+// ── neural web canvas ──
+// The one perpetual shell loop that survives Direction 1 (brand ambient). It is
+// idle-gated: pauses when the tab is hidden, when its canvas is scrolled out of
+// view, and dies for good if the canvas leaves the DOM.
+function startWeb(){
+  const cv = document.getElementById('web'); if(!cv) return;
+  const ctx = cv.getContext('2d'); let W,H,nodes,pulses;
+  const rnd=(a,b)=>a+Math.random()*(b-a);
+  const init=()=>{ W=cv.width=cv.offsetWidth; H=cv.height=cv.offsetHeight;
+    nodes=Array.from({length:Math.min(70,Math.floor(W*H/28000))},()=>({x:rnd(0,W),y:rnd(0,H),vx:rnd(-.09,.09),vy:rnd(-.09,.09)})); pulses=[]; };
+  const COL=['#FF2E88','#FF6B3D','#52F2B8'];
+  let running=false, inView=true, dead=false;
+  const step=()=>{
+    if(!running) return;
+    if(!cv.isConnected){ dead=true; running=false; return; } // canvas gone: kill the loop
+    ctx.clearRect(0,0,W,H);
+    const frozen = !!window.__reduceMotion; // Settings "reduce motion" freezes drift
+    for(const p of nodes){ if(!frozen){ p.x+=p.vx; p.y+=p.vy; if(p.x<0||p.x>W)p.vx*=-1; if(p.y<0||p.y>H)p.vy*=-1; } }
+    for(let i=0;i<nodes.length;i++) for(let j=i+1;j<nodes.length;j++){ const a=nodes[i],b=nodes[j],d=Math.hypot(a.x-b.x,a.y-b.y);
+      if(d<135){ ctx.strokeStyle='rgba(90,82,110,'+(0.12*(1-d/135))+')'; ctx.lineWidth=1; ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+        if(Math.random()<0.0004) pulses.push({a,b,t:0,c:COL[(Math.random()*3)|0]}); } }
+    for(const p of nodes){ ctx.fillStyle='rgba(239,237,242,0.4)'; ctx.fillRect(p.x-1,p.y-1,2,2); }
+    for(const pl of pulses){ pl.t+=0.02; const x=pl.a.x+(pl.b.x-pl.a.x)*pl.t, y=pl.a.y+(pl.b.y-pl.a.y)*pl.t; ctx.fillStyle=pl.c; ctx.shadowColor=pl.c; ctx.shadowBlur=9; ctx.fillRect(x-1.5,y-1.5,3,3); ctx.shadowBlur=0; }
+    pulses=pulses.filter(p=>p.t<1);
+    requestAnimationFrame(step);
+  };
+  const play=()=>{ if(dead||running||document.hidden||!inView) return; running=true; requestAnimationFrame(step); };
+  const pause=()=>{ running=false; };
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden) pause(); else play(); });
+  if('IntersectionObserver' in window){
+    new IntersectionObserver(es=>{ inView=!!(es[0]&&es[0].isIntersecting); if(inView) play(); else pause(); }).observe(cv);
+  }
+  addEventListener('resize',()=>{ init(); });
+  init(); play();
+}
+
+// ── re-index (real SSE) ──
+// Busy cursor: a COUNT, not a flag: a re-index and a health check can overlap,
+// and the first one to finish must not clear the cursor while the other runs.
+let __busyN = 0;
+function busyCursor(on){ __busyN = Math.max(0, __busyN + (on ? 1 : -1)); document.body.classList.toggle('is-busy', __busyN > 0); }
+function reindex(){
+  if(state.reindexing) return;
+  state.reindexing=true; busyCursor(true);
+  const btn=$('#reindexBtn'); btn.textContent='re-indexing…'; btn.style.color='var(--danger)'; btn.style.borderColor='var(--danger)';
+  announce('re-indexing your brain');
+  const es=new EventSource(CCT_Q('/api/ingest'));
+  const done=async(reload)=>{ es.close(); state.reindexing=false; busyCursor(false); btn.textContent='re-index'; btn.style.color='var(--danger)'; btn.style.borderColor='var(--danger)';
+    announce(reload ? 'index updated' : 're-index failed');
+    if(reload){ await loadOverview(); await loadActivity(); if(state.screen==='overview') render(); } };
+  es.addEventListener('phase',e=>{ try{ const d=JSON.parse(e.data); btn.textContent=d.label+'…'; announce(d.label); }catch(_){} });
+  es.addEventListener('done',()=>done(true));
+  es.addEventListener('error',()=>done(false));
+}
+
+// ── theme + clock ──
+function toggleTheme(){ state.theme = state.theme==='dark'?'light':'dark'; $('#app').setAttribute('data-theme',state.theme); try{ localStorage.setItem('callosium_theme', state.theme); }catch(e){} announce('theme: '+state.theme); }
+function tick(){ const d=new Date(), p=n=>String(n).padStart(2,'0'); $('#hudClock').textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds()); }
+
+/* __SCREENS__ */
+
+// ── boot ──
+// ── account + onboarding gating ──
+async function loadAccount(){ try{ const r=await api('/api/account'); state.account = r && r.account || null; state.accountFailed=false; }catch(e){ state.account=null; state.accountFailed=true; } }
+function hasBrain(){ return !!(state.overview && state.overview.onboarded); }
+function showOnboard(phase){
+  state.onboardPhase = phase;
+  const el = $('#onboard'); el.style.display='block';
+  if(window.renderOnboard) renderOnboard(phase);
+  else el.innerHTML='<div style="padding:60px;text-align:center;font-family:var(--mono);color:var(--faint)">loading…</div>';
+}
+const TOUR_KEY = 'callosium_tour_v1';
+function maybeTour(delay){ if(window.startCoach && !localStorage.getItem(TOUR_KEY)){ setTimeout(()=>{ try{ startCoach(); }catch(e){} }, delay||800); } }
+// The 20s live refresh — registered ONCE, from whichever path lands in the app
+// (returning users via boot, first-run users via enterApp).
+let liveRefreshOn = false;
+function startLiveRefresh(){
+  if(liveRefreshOn) return; liveRefreshOn = true;
+  setInterval(async()=>{ if(state.screen==='overview' && !state.reindexing && $('#onboard').style.display==='none'){ await loadActivity(); await loadOverview(); render(); } }, 20000);
+}
+// Background update check — throttled to once per interval via a localStorage
+// timestamp so we don't hit GitHub on every load. Populates state.st_update (so
+// Settings shows the result without a manual click) and raises a nav badge when
+// a newer version exists. Never throws into boot — offline is a no-op.
+const UPDATE_CHECK_MS = 6*60*60*1000; // 6h
+async function maybeCheckUpdate(force){
+  try{
+    const last = +(localStorage.getItem('callosium_last_update_check')||0);
+    if(!force && Date.now()-last < UPDATE_CHECK_MS) {
+      // still surface a badge from the cached result on this load
+      if(state.st_update && state.st_update.updateAvailable){ state.updateBadge=true; renderNav(); }
+      return;
+    }
+    const r = await api('/api/update/check');
+    localStorage.setItem('callosium_last_update_check', String(Date.now()));
+    state.st_update = r;
+    if(r && r.updateAvailable){ state.updateBadge = true; renderNav(); }
+  }catch(e){ /* offline / unreachable — ignore, Settings can retry manually */ }
+}
+// transient-failure retry (don't dump an existing user into onboarding on a blip)
+function showRetry(){
+  const el = $('#onboard'); el.style.display='block';
+  el.innerHTML = '<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px">'
+    + '<div style="font-family:var(--pixel);font-weight:700;font-size:26px;margin-bottom:10px">'+t('can’t reach your brain','تعذّر الوصول إلى دماغك')+'</div>'
+    + '<p style="color:var(--dust);font-size:14px;max-width:44ch;margin-bottom:22px">'+t('the local engine didn’t answer just now — your notes are safe on disk.','لم يستجب المحرك المحلي الآن — ملاحظاتك آمنة على القرص.')+'</p>'
+    + '<button id="obRetry" style="font-family:var(--pixel);font-weight:600;font-size:14px;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--synapse);color:var(--synapse-ink);background:transparent;padding:12px 24px;border-radius:0;cursor:pointer">'+t('try again','أعد المحاولة')+'</button></div>';
+  const b=$('#obRetry'); if(b) b.onclick=()=>{ el.style.display='none'; boot(); };
+}
+
+// called by the onboarding module when the user is signed in AND a brain is connected
+async function enterApp(){
+  await loadAccount(); await loadOverview(); await loadActivity();
+  $('#onboard').style.display='none';
+  state.screen='overview'; renderNav(); render();
+  startLiveRefresh();
+  maybeCheckUpdate();
+  maybeTour(800);
+}
+
+// One-time shell init: the neural-web rAF loop (startWeb; the vital-sparks
+// loop binds per-render from renderOverview), the 1s clock interval, and the
+// global #search listener must run EXACTLY once.
+// boot() is re-entrant — showRetry()'s "try again" calls it again after a
+// transient engine blip, precisely the path a user retries repeatedly — so
+// guard these or each retry stacks another rAF loop, clock timer, and duplicate
+// keydown handler (Enter would then fire nav('ask') N times).
+let shellInited = false;
+function initShellOnce(){
+  if(shellInited) return; shellInited = true;
+  // seed state.theme from what the pre-paint boot script applied to data-theme
+  state.theme = ($('#app').getAttribute('data-theme')==='light') ? 'light' : 'dark';
+  startWeb();
+  tick(); setInterval(tick,1000);
+  try{
+    // reduced motion = the app's persisted toggle OR the OS preference. The OS
+    // setting is honored live: flipping it mid-session re-applies immediately.
+    const mq = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+    const applyRM = ()=>{
+      let saved = false;
+      try{ saved = localStorage.getItem('callosium_reduce_motion')==='1'; }catch(e){}
+      window.__reduceMotion = saved || !!(mq && mq.matches);
+      const app = document.getElementById('app');
+      if(app){ if(window.__reduceMotion) app.setAttribute('data-reduce-motion','1'); else app.removeAttribute('data-reduce-motion'); }
+    };
+    applyRM();
+    if(mq && mq.addEventListener) mq.addEventListener('change', applyRM);
+  }catch(e){}
+  $('#themeBtn').onclick=toggleTheme;
+  $('#reindexBtn').onclick=reindex;
+  // Enter in the shell search hands the typed query to the Ask composer (design
+  // audit I8: it used to open Ask and silently discard what was typed).
+  $('#search').addEventListener('keydown',e=>{
+    if(e.key!=='Enter') return;
+    const q = e.target.value.trim();
+    if(q) state.ak_prefill = q;
+    e.target.value = '';
+    nav('ask');
+  });
+}
+async function boot(){
+  renderNav();
+  initShellOnce();
+  $('#screen').innerHTML='<div style="font-family:var(--mono);color:var(--faint);padding:20px">connecting…</div>';
+  // ?onboard=<view> — preview any onboarding view (welcome|signup|choice|
+  // existing|create|connect) without touching the signed-in account. Used for
+  // design review and demo captures; auto-pairing is disabled in preview so a
+  // look never mints a real agent token.
+  {
+    const pv = new URLSearchParams(location.search).get('onboard');
+    if(pv){
+      state.ob_preview = true;
+      const views = ['hero','signup','choice','existing','create','connect'];
+      state.ob_view = views.includes(pv) ? pv : 'hero';
+      if(state.ob_view==='connect') state.ob_setupMode = new URLSearchParams(location.search).get('mode') || 'blank';
+      showOnboard(['choice','existing','create','connect'].includes(state.ob_view) ? 'setup' : 'welcome');
+      return;
+    }
+  }
+  await loadAccount();
+  await loadOverview(); await loadActivity();
+  // gate: distinguish "genuinely no account" from "couldn't reach the engine".
+  // A transient account OR overview failure must offer a retry — never re-onboard
+  // an already-set-up user just because a request blipped on load.
+  if(!state.account){ if(state.accountFailed){ showRetry(); return; } showOnboard('welcome'); return; }
+  if(!hasBrain()){ if(state.overviewFailed){ showRetry(); return; } showOnboard('setup'); return; }
+  render();
+  startLiveRefresh();
+  maybeCheckUpdate();
+  maybeTour(900);
+}
+boot();
+</script>
+</body>
+</html>

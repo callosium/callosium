@@ -107,10 +107,15 @@ export function buildLinkerIndex(
 
   for (const n of notes) {
     if (badTarget(n.path)) continue;
+    // A note whose BASENAME carries wikilink metacharacters ([ ] | #) can never be a
+    // link target: applyLinks writes `[[${nameOf(target)}|${phrase}]]`, so the basename
+    // is what lands in the note. This has to be checked on the TARGET, not on the name
+    // being matched — the per-`raw` check below only coincided with the basename on the
+    // first iteration, so any ALIAS of a note called "Notes [archive].md" sailed through
+    // and wrote the broken "[[Notes [archive]|Archive]]" into the user's file.
+    if (/[[\]|#]/.test(nameOf(n.path))) continue;
     for (const raw of [nameOf(n.path), ...n.aliases]) {
-      // A name containing wikilink metacharacters ([ ] | #) can't be written as a
-      // valid [[target]] — a note like "Notes [archive].md" would yield the broken
-      // "[[Notes [archive]|phrase]]". Never make such a name a link target.
+      // Belt and braces: an alias with metacharacters is never a sane surface either.
       if (/[[\]|#]/.test(raw)) continue;
       const toks = surfaceTokens(raw);
       if (!toks.length) continue;

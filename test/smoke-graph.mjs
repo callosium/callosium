@@ -18,7 +18,18 @@ const byType = new Map();
 for (const e of index.edges) byType.set(e.type, (byType.get(e.type) || 0) + 1);
 console.log('Edge types:', [...byType.entries()].map(([t, n]) => `${t}=${n}`).join(' '));
 
-const probe = process.argv[3] ?? 'Ventures/Brain MCP Product.md';
+// Probe defaults to the first note that actually HAS edges in whatever brain was
+// passed, rather than a hardcoded path — the old default named a real note from the
+// author's private vault, which both leaked a note title into the repo and made the
+// smoke test print "0 edges" for everyone else.
+const probe =
+  process.argv[3] ??
+  index.edges.find((e) => !e.unresolved)?.from ??
+  index.notes?.[0]?.path;
+if (!probe) {
+  console.log('\nNo notes with edges in this brain — nothing to probe.');
+  process.exit(0);
+}
 const rel = related(index, probe);
 console.log(`\nRelated to ${probe}: ${rel.length} edges`);
 for (const r of rel.slice(0, 12)) console.log(`  ${r.direction === 'out' ? '→' : '←'} [${r.type}] ${r.other}`);

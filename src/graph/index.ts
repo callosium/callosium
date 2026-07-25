@@ -54,6 +54,9 @@ export async function buildGraph(vault: Vault, shared?: SharedTexts): Promise<Bu
 
   const files = shared ? shared.files : await vault.listNotes();
   const notes: { note: ReturnType<typeof parseNote>; hash: string }[] = [];
+  /** Notes we could not read this pass; their prior edges are carried forward verbatim
+   *  and no hash is recorded, so the next build re-reads them for real. */
+  const unreadable: string[] = [];
   for (const f of files) {
     let raw: string | null = null;
     if (shared) raw = shared.unreadable?.has(f) ? null : (shared.texts.get(f) ?? '');
@@ -61,11 +64,16 @@ export async function buildGraph(vault: Vault, shared?: SharedTexts): Promise<Bu
       try { raw = await vault.readFileRetry(f); } catch { /* transient lock */ }
     }
     if (raw === null) {
-      // Don't index a transiently-unreadable note as EMPTY — that would drop all
-      // its edges and rewrite its hash. Carry the prior hash forward so it reads
-      // as unchanged and its edges are reused; if there is no prior hash, skip it
-      // this build rather than blanking it.
-      if (stale?.noteHashes[f] !== undefined) notes.push({ note: parseNote(f, ''), hash: stale.noteHashes[f] });
+      // Transiently unreadable (a sync lock, an AV scan). It must NOT be indexed as
+      // empty. Feeding it forward as parseNote(f,'') with the prior hash looked safe
+      // — the hash matches, so the reuse branch fires — but reuse is conditional on
+      // stillValid, and when that fails (a link target was renamed) the note fell
+      // through to re-extraction FROM THE EMPTY BODY: every edge erased, and the
+      // stale hash recorded so it reads as "unchanged" on every later build too. The
+      // note became a permanent phantom with no links.
+      // Handled out-of-band instead: keep whatever edges we already had, and record
+      // NO hash, so the next build treats it as new and genuinely re-reads it.
+      unreadable.push(f);
       continue;
     }
     // NFC-normalize before hashing: shared texts come from loadTexts, which
@@ -127,6 +135,15 @@ export async function buildGraph(vault: Vault, shared?: SharedTexts): Promise<Bu
     }
     edges.push(...resolveEdges(note.path, extractCandidates(note), nameMap, sepMap));
     extracted++;
+  }
+
+  // Notes we could not read: keep the edges we already knew about rather than
+  // asserting the note has none, and deliberately leave them OUT of noteHashes so the
+  // next build sees them as unhashed and re-reads them. Losing a rebuild is cheap;
+  // silently erasing a note's links is not.
+  for (const f of unreadable) {
+    const old = staleByFrom.get(f);
+    if (old?.length) edges.push(...old);
   }
 
   // Nothing re-extracted AND the exact same note set as before → the derived

@@ -41,14 +41,28 @@ fn free_port() -> u16 {
         .unwrap_or(4319)
 }
 
-/// A per-launch token the Node server echoes on /__health. Not a security boundary (loopback only),
-/// just enough entropy to distinguish OUR server from any other listener on the same port.
+/// A per-launch token the Node server echoes on /__health, so we can tell OUR server from any other
+/// listener that ended up on the same port.
+///
+/// This used to be `cal-{wall_clock_nanos:x}-{pid:x}`, which is not a secret: the pid is in the task
+/// list, and the nanos are bounded by the observable process-creation time. Loopback is not
+/// user-isolated on Windows, so another local account could watch free_port() bind-and-release,
+/// grab the port before the Node child does, and then only had to cover a few milliseconds of clock
+/// uncertainty to be accepted as us. 128 CSPRNG bits are not guessable at all, which is the property
+/// we actually wanted and the reason not to derive this from anything observable.
 fn launch_token() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("cal-{:x}-{:x}", nanos, std::process::id())
+    let mut bytes = [0u8; 16];
+    if getrandom::getrandom(&mut bytes).is_err() {
+        // No OS entropy is not a "degrade quietly" situation: the token is the only thing that
+        // distinguishes our server from an impostor, and a predictable one is worse than none
+        // because it still reads as verified. Refuse to launch instead.
+        panic!("callosium: no OS entropy available to mint a launch token");
+    }
+    let mut s = String::from("cal-");
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
 }
 
 /// Short, writable, install-independent model cache (mirrors the portable
@@ -99,13 +113,75 @@ fn spawn_server(app: &tauri::AppHandle, port: u16, token: &str) -> Option<Child>
     }
 
     match cmd.spawn() {
-        Ok(child) => Some(child),
+        Ok(child) => {
+            bind_child_lifetime(&child);
+            Some(child)
+        }
         Err(e) => {
             eprintln!("callosium-desktop: failed to spawn server: {e}");
             None
         }
     }
 }
+
+/// Tie the server's lifetime to ours at the OS level, so it cannot outlive the shell.
+///
+/// kill_server only runs on tray Quit and ExitRequested, and closing the window calls
+/// prevent_close (we hide to tray), so ExitRequested never fires that way. Anything that ends this
+/// process without going through the tray menu — Task Manager "End task", sign-out, an updater
+/// replacing the binary, or a panic (release builds are `panic = "abort"`) — used to leave a full
+/// server running with no window and no tray icon: still serving the entire vault on its loopback
+/// port, still holding the fixed MCP port 4321. The user believes Callosium is closed and has no way
+/// to stop it. Worse, the NEXT launch then can't bind 4321, that failure is swallowed, and every
+/// configured AI keeps talking to the orphan — so if the user has since switched brains, their
+/// agents read and write the OLD vault while the cockpit shows the new one.
+///
+/// A Job Object with KILL_ON_JOB_CLOSE makes this the kernel's problem: the job handle is owned by
+/// this process, so when we die for ANY reason the handle closes and Windows terminates everything
+/// in the job. We deliberately leak the handle (into_raw) — its lifetime is meant to be the
+/// process's, and dropping it early would kill the server while we're still using it.
+#[cfg(windows)]
+fn bind_child_lifetime(child: &std::process::Child) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, SetInformationJobObject,
+        JobObjectExtendedLimitInformation, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+    unsafe {
+        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        if job.is_null() {
+            return; // best-effort: a shell without a job is what we shipped before, not a regression
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            &info as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+        ) == 0
+        {
+            return;
+        }
+        AssignProcessToJobObject(job, child.as_raw_handle() as _);
+        // Deliberately never CloseHandle(job): KILL_ON_JOB_CLOSE fires when the LAST handle to the
+        // job closes, so holding it open for the life of this process is exactly the mechanism.
+        // It is a raw HANDLE with no Drop, so leaving it here is all that takes — the OS reclaims it
+        // when we exit, which is the moment we want the server killed anyway.
+    }
+}
+
+/// Non-Windows: no equivalent is wired up, and that is stated rather than papered over.
+///
+/// The Linux answer would be prctl(PR_SET_PDEATHSIG) — but prctl applies to the CALLING process, so
+/// it has to be armed inside the child via a pre_exec hook before exec, not from the parent after
+/// spawn. macOS has no PDEATHSIG at all and needs a kqueue watcher on the parent pid. Both are real
+/// work, and the shipped installers are Windows and macOS; doing the Windows job object properly and
+/// being honest about the other two beats a plausible-looking call that silently protects nothing.
+/// Until then, tray Quit and ExitRequested remain the only cleanup paths on those platforms.
+#[cfg(not(windows))]
+fn bind_child_lifetime(_child: &std::process::Child) {}
 
 /// Block until the local server on `port` answers /__health with OUR `token` (or give up ~90s). A
 /// bare TCP-accept isn't enough — any process could be listening on that port; the token proves it's
@@ -135,7 +211,19 @@ fn health_ok(port: u16, token: &str) -> bool {
     let mut buf = String::new();
     // read_to_string returns whatever arrived before the timeout / connection close; either is fine.
     let _ = stream.read_to_string(&mut buf);
-    buf.contains(token)
+    // Compare the PARSED token field, not `buf.contains(token)`. A substring test over the whole raw
+    // response lets one reply carry many guesses at once: an impostor on this port could answer with
+    // a body concatenating every candidate token and match on the first probe. Parsing means a
+    // response asserts exactly one token, so a guess costs a full round trip — and against 128
+    // random bits that is not a game anyone can win. (Body starts after the header terminator; a
+    // response without one is malformed and not ours.)
+    let Some((_, body)) = buf.split_once("\r\n\r\n").or_else(|| buf.split_once("\n\n")) else {
+        return false;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) else {
+        return false;
+    };
+    v.get("token").and_then(|t| t.as_str()) == Some(token)
 }
 
 fn kill_server(app: &tauri::AppHandle) {
@@ -183,6 +271,19 @@ pub fn run() {
                 if let Ok(mut g) = state.0.lock() {
                     *g = url.clone();
                 }
+            }
+            // Hand the loading screen the REAL url, purely so its "open manually" escape hatch
+            // points somewhere true. The page used to hard-code 4319 and auto-redirect to whatever
+            // answered there, which loaded unverified local servers into this trusted window; it now
+            // never navigates itself and shows this link only if we set it. Display only — the
+            // verified navigate below is still the sole way this window changes page.
+            if let Some(w) = app.get_webview_window("main") {
+                // Set the value AND call the setter, because this can land either side of the
+                // page's own script running.
+                let _ = w.eval(&format!(
+                    "window.__CAL_URL={0};if(window.__calSetUrl)window.__calSetUrl({0});",
+                    serde_json::json!(url)
+                ));
             }
             let handle = app.handle().clone();
             let did_spawn = match spawn_server(&handle, port, &token) {

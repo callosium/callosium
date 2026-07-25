@@ -10,7 +10,8 @@
 // Platforms: win-x64, win-arm64, darwin-arm64, darwin-x64, linux-x64, linux-arm64.
 // Windows targets ship as .zip; unix targets as .tar.gz (exec bits survive).
 // Cross-target STAGING is not supported: `npm ci` installs the HOST's native
-// binaries (sharp), so build each target on a matching host (CI matrix).
+// binaries (sharp), so build each target on a host matching BOTH its OS and
+// its CPU arch (CI matrix) — the guard below refuses anything else.
 //
 // What lands in the archive (callosium-<platform>-portable/):
 //   runtime/            node.exe (win) or bin/node (unix) + Node's LICENSE
@@ -62,11 +63,20 @@ const PLATFORMS = {
 const plat = PLATFORMS[PLATFORM];
 if (!plat) throw new Error(`Unknown --platform "${PLATFORM}". One of: ${Object.keys(PLATFORMS).join(', ')}`);
 const isWinTarget = plat.nodeOs === 'win32';
-const hostMatches = process.platform === plat.nodeOs;
+// The mismatch is per-ARCH, not just per-OS: npm resolves sharp's optional
+// deps against the host's process.arch (@img/sharp-win32-x64 is cpu:["x64"]),
+// so `--platform win-arm64` on an x64 Windows box used to sail through this
+// gate and ship an x64 sharp inside an arm64 bundle. @huggingface/transformers
+// imports sharp at module load, so semantic recall in that bundle is dead on
+// arrival — and the engine reports the failure as ModelUnavailableError, i.e.
+// tells the consumer to wait for a download that will never fix it. An artifact
+// people download is worse wrong than missing, so refuse to build it.
+const hostMatches = process.platform === plat.nodeOs && process.arch === plat.nodeArch;
 if (!hostMatches) {
   throw new Error(
-    `Cross-target staging is not supported: npm ci installs the HOST's native binaries. ` +
-      `Build ${PLATFORM} on a ${plat.nodeOs} host (CI matrix).`,
+    `Cross-target staging is not supported: npm ci installs the HOST's native binaries ` +
+      `(sharp is gated on BOTH os and cpu). Build ${PLATFORM} on a ${plat.nodeOs}/${plat.nodeArch} ` +
+      `host (CI matrix) — this host is ${process.platform}/${process.arch}.`,
   );
 }
 

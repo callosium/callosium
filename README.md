@@ -25,7 +25,7 @@ At the end, the dashboard generates the exact config for your AI — Claude, Cur
 
 > First run downloads Callosium's language model (~120MB, one time) so meaning-based search works in English and Arabic — fully offline after that. No internet on first run? Everything still works — keyword recall needs no model, and the smarter search switches itself on once the model is in place.
 
-> **On Linux:** installing pulls in GPU add-ons for the search library that Callosium never uses (it runs on the CPU everywhere). Skip them and the install is much smaller and faster:
+> **On Linux:** the install pulls in GPU add-ons for the search library that Callosium never uses — it runs on the CPU everywhere. Measured in CI: **725MB installed on Linux vs 414MB on Windows and macOS**, so that's 311MB of downloaded code that never runs. Skip it:
 > ```bash
 > ONNXRUNTIME_NODE_INSTALL=skip npm install -g callosium
 > ```

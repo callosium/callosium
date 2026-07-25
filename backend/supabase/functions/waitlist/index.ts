@@ -112,13 +112,48 @@ Deno.serve(async (req: Request) => {
 
   const supabase = createClient(url, serviceKey, { auth: { persistSession: false } });
 
-  // Dup-safe: ON CONFLICT (lower(email)) DO NOTHING via upsert with ignoreDuplicates.
-  // A repeat signup is a friendly no-op, not an error the visitor sees.
+  // Dup-safe AND escalation-safe. This used to be one upsert with
+  // ignoreDuplicates (ON CONFLICT DO NOTHING), which threw the second signup
+  // away: someone who joined via the hero form on Monday and then clicked
+  // "Claim founding-member price" on Wednesday was told "You're on the list"
+  // while their row stayed plan='free'. The launch read (`select plan, count(*)
+  // from public.waitlist group by plan`) then undercounted founding by exactly
+  // the people who asked for it hardest — and we'd reported success for a write
+  // that never happened, which is the one thing this product promises not to do.
+  //
+  // So: insert first, and on the unique-email conflict escalate the existing row
+  // ONLY when the new signup is founding. Escalation is deliberately one-way — a
+  // later free signup must never pull a founding row back down, which is why
+  // simply flipping ignoreDuplicates to false (ON CONFLICT DO UPDATE SET every
+  // column) would have been a worse bug than the one it fixed.
   const { error } = await supabase
     .from('waitlist')
-    .upsert({ email, source, plan, user_agent: userAgent }, { onConflict: 'email', ignoreDuplicates: true });
+    .insert({ email, source, plan, user_agent: userAgent });
 
-  if (error) {
+  // 23505 = Postgres unique_violation on waitlist_email_unique: already on the list.
+  if (error?.code === '23505') {
+    if (plan === 'founding') {
+      // Two statements instead of one ON CONFLICT DO UPDATE (which PostgREST
+      // can't express — that would need an RPC, and therefore a migration that
+      // has to land BEFORE this function or every signup 500s). Splitting it is
+      // safe here because the update only ever runs for plan='founding', so no
+      // interleaving of concurrent signups can produce a downgrade.
+      // `neq` keeps a repeat founding click from rewriting a row that is already
+      // founding. source and created_at are left alone on purpose: they are the
+      // first-touch record of how this person found us, and the founding claim
+      // is already carried by `plan`.
+      const { error: escalateError } = await supabase
+        .from('waitlist')
+        .update({ plan: 'founding' })
+        .eq('email', email)
+        .neq('plan', 'founding');
+      if (escalateError) {
+        console.error('waitlist founding escalation failed:', escalateError.message);
+        return json(500, { error: 'Could not save your spot right now — please try again.' }, cors);
+      }
+    }
+    // A repeat FREE signup really is a friendly no-op — nothing to record.
+  } else if (error) {
     // Never leak DB internals to the browser; log for the operator.
     console.error('waitlist insert failed:', error.message);
     return json(500, { error: 'Could not save your spot right now — please try again.' }, cors);

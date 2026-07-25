@@ -199,10 +199,21 @@ function healthPaint(){
 
   // build friendly groups from real counts
   state.health_expanded = state.health_expanded || {};
+  // Which groups had a check that DIDN'T RUN this pass. Zero findings from a check that never
+  // executed is not "all clear", and the ok-card says things like "nothing malformed" in the
+  // brain's own voice — a confident claim about notes nobody looked at. Those groups get a third
+  // state instead: not a pass, not a failure, an admission.
+  const skipped = (state.health_data && state.health_data.skipped) || [];
+  const SKIP_GROUP = { 'frontmatter-conformance': 'format' };
+  const skippedByGroup = {};
+  for (const s of skipped) {
+    const gid = SKIP_GROUP[s.check];
+    if (gid) skippedByGroup[gid] = s.reason;
+  }
   const cards = HEALTH_GROUPS.map(g => {
     const n = g.keys.reduce((s,k)=>s + (byKind[k]||0), 0);
     const items = n > 0 ? findings.filter(f => g.keys.indexOf(f.kind) !== -1) : [];
-    return { g, n, items, paths: items.map(f => f.path), active: n > 0 };
+    return { g, n, items, paths: items.map(f => f.path), active: n > 0, skippedReason: skippedByGroup[g.id] || null };
   });
   // synthetic "everything indexed" reassurance card, mirroring the design
   const indexedCard = {
@@ -346,16 +357,23 @@ function healthPaint(){
 // one finding card (active colored card, or an ok green-check card)
 function healthFindingHTML(item){
   const g = item.g;
-  const sev = item.active ? g.sev : 'ok';
+  // A skipped check is neither a pass nor a failure. Rendering it as the green ok-card would put a
+  // confident claim ("nothing malformed") on notes that were never examined, which is precisely the
+  // thing this product refuses to do. Show it as a notice that states plainly it did not run.
+  const didNotRun = !!item.skippedReason && !item.active;
+  const sev = didNotRun ? 'notice' : item.active ? g.sev : 'ok';
   const col = HEALTH_SEV_COL[sev];
   const isWarn = sev === 'warn';
-  const icon = item.active ? g.icon : '✓';
+  const icon = didNotRun ? '?' : item.active ? g.icon : '✓';
 
   const title = item.indexed ? 'everything is indexed'
+    : didNotRun ? 'this check didn’t run'
     : item.active ? g.title(item.n) : g.okTitle;
   const desc = item.indexed ? ('All ' + (item.notes||0).toLocaleString('en-US') + ' notes are searchable, and this check just ran.')
+    : didNotRun ? item.skippedReason
     : item.active ? g.desc : g.okDesc;
   const count = item.indexed ? ((item.notes||0).toLocaleString('en-US') + ' notes')
+    : didNotRun ? 'not checked'
     : item.active ? g.count(item.n) : g.okCount;
   const badge = HEALTH_BADGE[sev];
 

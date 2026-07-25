@@ -218,6 +218,25 @@ export function validateNote(
 
   // Reference/verbatim files are exempt from frontmatter rules by schema.
   if (note.rawFile) {
+    // A note whose `---` block is PRESENT but doesn't parse is a different fact from one
+    // that has no block at all, and a worse one — parseNote sets noFrontmatter only for
+    // the no-block case, and that flag was being ignored here. Two things were wrong:
+    // the report told the owner (and their AI, via the Health screen's "add the missing
+    // fields" prompt) "no frontmatter block", which is false and un-actionable — the
+    // write tools refuse the very same note with "has a --- block whose YAML did not
+    // parse" — and the condition that actually matters was reported by nothing at all.
+    // A broken block makes a note permanently un-writable and un-stampable by every
+    // agent, so it is reported in EVERY folder: the bucketed/Inbox/Reference carve-outs
+    // below exist because those partitions legitimately hold notes with NO frontmatter,
+    // which was never meant to bless a block that is there and broken.
+    if (!note.noFrontmatter) {
+      findings.push({
+        kind: 'invalid-frontmatter',
+        path: note.path,
+        detail: 'has a --- block whose YAML did not parse as frontmatter — no agent can write to this note until the block is fixed or removed',
+      });
+      return findings;
+    }
     if (part && !partDef?.bucketed && part !== 'Inbox' && !note.path.startsWith('Reference/')) {
       findings.push({ kind: 'missing-frontmatter', path: note.path, detail: `no frontmatter block (partition ${part} expects one)` });
     }

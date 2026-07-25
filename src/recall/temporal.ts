@@ -36,12 +36,26 @@ function mkUTC(y: number, month1: number, day: number): number | null {
 
 export function noteDateInfo(path: string, text: string): { ms: number; source: DateSource } | null {
   const base = path.split('/').pop() || '';
-  const fn = base.match(/\b(\d{1,2})\s+([A-Za-z]+)\s+(20\d{2})\b/);
-  if (fn && MONTHS[fn[2].toLowerCase()] != null) { const ms = mkUTC(+fn[3], MONTHS[fn[2].toLowerCase()] + 1, +fn[1]); if (ms != null) return { ms, source: 'name' }; }
-  const iso = base.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
-  if (iso) { const ms = mkUTC(+iso[1], +iso[2], +iso[3]); if (ms != null) return { ms, source: 'name' }; }
-  const pm = path.match(/\/(20\d{2})\/(\d{2})\s+[A-Za-z]{3}\//);
-  if (pm) { const ms = mkUTC(+pm[1], +pm[2], 1); if (ms != null) return { ms, source: 'path' }; }
+  // Scan EVERY "D Word YYYY" in the filename, not just the first. `.match`
+  // without /g returns match #1 only, so any title shaped "<1-2 digits> <word>
+  // <20xx>" ("Phase 2 rollout 2026", "Top 5 risks 2026", "Week 30 review 2026")
+  // took the slot with a non-month word, the guard failed, and the genuine
+  // trailing date Callosium's own memory/log namer appends (" 26 Jul 2026") was
+  // never examined. The note then fell back to the folder's day-1 date or to
+  // `front` — 25 days wrong, or demoted out of `recent`'s tier 0 and, when 8+
+  // notes shared that frontmatter date, labelled "[bulk]" for work done today.
+  for (const fn of base.matchAll(/\b(\d{1,2})\s+([A-Za-z]+)\s+(20\d{2})\b/g)) {
+    const mon = MONTHS[fn[2].toLowerCase()];
+    if (mon == null) continue;
+    const ms = mkUTC(+fn[3], mon + 1, +fn[1]);
+    if (ms != null) return { ms, source: 'name' };
+  }
+  // Same reason for ISO: a first match that isn't a real calendar date
+  // ("2026-13-05") must not hide a real one later in the same name.
+  for (const iso of base.matchAll(/\b(20\d{2})-(\d{2})-(\d{2})\b/g)) {
+    const ms = mkUTC(+iso[1], +iso[2], +iso[3]);
+    if (ms != null) return { ms, source: 'name' };
+  }
   // Only the YAML FRONTMATTER block — not the whole head — so a prose body line
   // like "Date: 3 May 2026 recap" is never mistaken for the note's date.
   const fmBlock = text.match(/^﻿?---\r?\n([\s\S]*?)\r?\n---/);
@@ -50,6 +64,15 @@ export function noteDateInfo(path: string, text: string): { ms: number; source: 
     const m = block.match(new RegExp(`^${key}:\\s*["']?([^"'\\n]+)`, 'mi'));
     if (m) { const d = parseDateStr(m[1].trim()); if (d != null) return { ms: d, source: 'front' }; }
   }
+  // LAST resort. A `/YYYY/MM Mon/` folder pins only the MONTH, so this branch
+  // has to invent day 1. It used to run ABOVE the frontmatter loop, which meant
+  // a note in Logs/…/2026/07 Jul/ stamped `updated: 2026-07-26` resolved to
+  // 1 Jul: "what did I do last week" dropped a note edited two days ago, and
+  // "last month" printed 2026-07-01 at tier 0 — a specific day of activity
+  // nothing in the note supports. A day-precise stamp beats a month-granular
+  // guess, so the guess now only speaks when nothing else can.
+  const pm = path.match(/\/(20\d{2})\/(\d{2})\s+[A-Za-z]{3}\//);
+  if (pm) { const ms = mkUTC(+pm[1], +pm[2], 1); if (ms != null) return { ms, source: 'path' }; }
   return null;
 }
 

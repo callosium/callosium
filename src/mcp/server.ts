@@ -1679,7 +1679,15 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
           text: JSON.stringify({
             notesInYourScope: files.filter((fp) => canRead(agent, fp)).length,
             findings,
-            note: 'counts and findings are limited to the folders you can read.',
+            // A check that could not run is reported, not omitted. Without this an AI reads an
+            // empty `findings` as "the brain is clean" and tells the owner so — when the truth may
+            // be that their own schema failed to load and nothing was checked against it. The
+            // agent is the one talking to the human, so it needs the caveat, not just the result.
+            ...(report.skipped.length ? { checksThatDidNotRun: report.skipped } : {}),
+            schemaUsed: report.schemaSource,
+            note: report.skipped.length
+              ? 'counts and findings are limited to the folders you can read — AND some checks did not run (see checksThatDidNotRun). Do not report this brain as clean; say which checks were skipped and why.'
+              : 'counts and findings are limited to the folders you can read.',
           }, null, 2),
         }],
       };

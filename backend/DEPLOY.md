@@ -91,6 +91,12 @@ curl -X POST https://<ref>.supabase.co/functions/v1/waitlist \
   -H 'content-type: application/json' \
   -d '{"email":"test@example.com","source":"smoke"}'
 # → {"ok":true}   (a second identical call is also {"ok":true} — dup-safe no-op)
+#
+# NOTE: "no-op" is only true when the plan is unchanged. A repeat signup that
+# claims plan:"founding" UPGRADES the existing row — it is not ignored. That is
+# deliberate: the same person very often joins from the hero form first and
+# clicks the founding CTA days later, and the old ON CONFLICT DO NOTHING threw
+# that claim away while still telling them they were on the list.
 ```
 
 Read signups (from the SQL editor, service role):
@@ -127,6 +133,13 @@ Read the split (SQL editor):
 ```sql
 select plan, count(*) from public.waitlist group by plan;
 ```
+
+`plan` escalates one way only: `free → founding`, never back. So this count is
+"people who have ever claimed founding", which is what you want on launch day.
+`source` keeps FIRST-touch attribution and is not overwritten by a later signup —
+so `select source, count(*) ... where plan='founding'` tells you where those people
+originally arrived from, NOT which CTA produced the founding claim. If you need the
+latter, add a separate column; don't read it out of `source`.
 
 ## 2. Accounts + Auth (DEPLOYED — one dashboard step left)
 

@@ -5,7 +5,7 @@
 
 import { Vault } from '../core/vault.ts';
 import { parseNote } from '../core/frontmatter.ts';
-import { loadSchema } from '../core/schema.ts';
+import { loadSchema, SCHEMA_IN_BRAIN } from '../core/schema.ts';
 import { validateNote, isConformanceExempt } from '../filing/engine.ts';
 import { buildGraph, type BuildResult } from '../graph/index.ts';
 import { isHub } from '../structure/map.ts';
@@ -46,6 +46,12 @@ export interface CheckReport {
   /** Findings grouped by kind, for the summary line. */
   byKind: Record<string, number>;
   schemaSource: 'brain' | 'default';
+  /** Checks this run did NOT perform, and why. Empty = the whole audit ran. A report that
+   *  quietly drops a check is a clean bill of health the product never earned, so the
+   *  omission travels WITH the report to every surface that shows it (CLI, MCP
+   *  brain_check, the dashboard Health card) instead of only reaching a console nobody
+   *  reads. Consumers must render this instead of the "nothing malformed" ok state. */
+  skipped: { check: string; reason: string }[];
   ms: number;
 }
 
@@ -183,12 +189,23 @@ export async function brainCheck(vault: Vault, shared?: { texts?: VaultTexts; bu
     if (STRUCTURAL.has(c.name)) continue;
     if (c.paths.every(inRaw)) continue;
     if (c.paths.every(inMeetings)) continue;
-    if (c.paths.some(isConflictCopy)) continue;
+    // Drop the conflict/quarantine COPIES from the collision, not the collision itself.
+    // This used to be `.some(isConflictCopy)`, which threw the whole finding away: a
+    // genuine Work/Acme.md vs Personal/Acme.md duplicate — the kind recall silently
+    // resolves to just one of the two — vanished from the report the moment an unrelated
+    // Quarantine/Acme.md existed beside them. Nothing else covered it either
+    // (sync-conflict-copy only fires for a device-suffixed name whose exact original sits
+    // in the SAME folder), so the report asserted no clash where there were two. A clash
+    // is still only a clash between two DISTINCT real notes, so a lone note shadowed by
+    // its own quarantine copy stays suppressed exactly as before — the same reason the
+    // two guards above use .every().
+    const real = c.paths.filter((p) => !isConflictCopy(p));
+    if (real.length < 2) continue;
     findings.push({
       kind: 'duplicate-alias',
-      path: c.paths[0],
-      paths: c.paths,
-      detail: `"${c.name}" claimed by ${c.paths.length} notes: ${c.paths.join(' · ')}`,
+      path: real[0],
+      paths: real,
+      detail: `"${c.name}" claimed by ${real.length} notes: ${real.join(' · ')}`,
     });
   }
 
@@ -196,6 +213,20 @@ export async function brainCheck(vault: Vault, shared?: { texts?: VaultTexts; bu
   //    brain.json) — the generic default schema must not judge a mature vault's
   //    own type/status conventions as "malformed".
   const strict = source === 'brain';
+  // A brain.json that EXISTS but couldn't be loaded (a hand-edit typo — it's documented as
+  // hand-editable — an unreadable file, a shape validateSchema rejects) is NOT the same as
+  // a vault that never had one. loadSchema falls back to the default and only console.warns,
+  // which is invisible in the desktop app and over MCP stdio, and `strict` then turns OFF
+  // every check below: a vault that reported 40 format findings yesterday reports 0 today
+  // and the Health card affirms "nothing malformed". Record the omission on the report so
+  // the check that didn't run can't be read as a check that passed.
+  const skipped: CheckReport['skipped'] = [];
+  if (!strict && vault.exists(SCHEMA_IN_BRAIN)) {
+    skipped.push({
+      check: 'frontmatter-conformance',
+      reason: `${SCHEMA_IN_BRAIN} is present but could not be loaded — it isn't valid JSON, or isn't a valid brain schema. Your notes were NOT checked against your own format this run. Fix the file (or delete it to fall back to the default) and check again.`,
+    });
+  }
   // Detect hubs while we already have each note's text in hand — using the SAME
   // isHub() the map + write-path nudge use (frontmatter type:moc OR home/index/moc
   // basename), so the moc-gap audit can't disagree with what the map calls a hub.
@@ -273,10 +304,16 @@ export async function brainCheck(vault: Vault, shared?: { texts?: VaultTexts; bu
     if (e.unresolved) continue;
     (backlinks.get(e.to) ?? backlinks.set(e.to, new Set<string>()).get(e.to)!).add(e.from);
   }
-  const folderHub = new Map<string, string>(); // folder prefix → first hub note in it
+  // EVERY hub in a folder, not just the first one found. A folder can legitimately hold
+  // more than one map (a "Home" that only links sub-hubs beside a "Clients Index" that
+  // lists the actual notes); testing the first one alone reported every note in the
+  // folder as missing from its topic map even though another hub right there links it —
+  // a false statement of fact, at folder scale. The 4d pass below already tests "linked
+  // from ANY hub"; 4b now matches it.
+  const folderHub = new Map<string, string[]>(); // folder prefix → every hub note in it
   for (const f of hubPaths) {
     const folder = f.split('/').slice(0, -1).join('/') + '/';
-    if (!folderHub.has(folder)) folderHub.set(folder, f);
+    (folderHub.get(folder) ?? folderHub.set(folder, []).get(folder)!).push(f);
   }
   // No cap: every finding is a real note path, so byKind counts, the CLI summary,
   // the health card, and per-agent scope-filtering all stay honest (a synthetic
@@ -288,13 +325,18 @@ export async function brainCheck(vault: Vault, shared?: { texts?: VaultTexts; bu
     if (f.startsWith('System/') || inVerbatim(f) || f.startsWith('Inbox/') || f.startsWith('Templates/')) continue;
     if (hubPaths.has(f)) continue; // a hub isn't its own gap
     if (orphanPaths.has(f)) continue; // fully unlinked → orphan-note owns it (don't double-count)
-    const hub = folderHub.get(f.split('/').slice(0, -1).join('/') + '/');
-    if (!hub || hub === f) continue; // no hub governs this folder
-    if (backlinks.get(f)?.has(hub)) continue; // the hub already links it → wired
+    const hubs = (folderHub.get(f.split('/').slice(0, -1).join('/') + '/') ?? []).filter((h) => h !== f);
+    if (!hubs.length) continue; // no hub governs this folder
+    const back = backlinks.get(f);
+    if (hubs.some((h) => back?.has(h))) continue; // ANY hub in the folder links it → wired
+    const names = hubs.map((h) => `[[${h.split('/').pop()!.replace(/\.md$/, '')}]]`);
     findings.push({
       kind: 'moc-gap',
       path: f,
-      detail: `sits beside a map-of-content ([[${hub.split('/').pop()!.replace(/\.md$/, '')}]]) that doesn't link it — add it to the hub so the note stays reachable`,
+      detail:
+        names.length === 1
+          ? `sits beside a map-of-content (${names[0]}) that doesn't link it — add it to the hub so the note stays reachable`
+          : `sits beside ${names.length} maps-of-content (${names.join(', ')}) and none of them links it — add it to one so the note stays reachable`,
     });
   }
 
@@ -370,5 +412,5 @@ export async function brainCheck(vault: Vault, shared?: { texts?: VaultTexts; bu
   const byKind: Record<string, number> = {};
   for (const f of findings) byKind[f.kind] = (byKind[f.kind] || 0) + 1;
 
-  return { notes: files.length, edges: index.edges.length, findings, byKind, schemaSource: source, ms: Date.now() - t0 };
+  return { notes: files.length, edges: index.edges.length, findings, byKind, schemaSource: source, skipped, ms: Date.now() - t0 };
 }

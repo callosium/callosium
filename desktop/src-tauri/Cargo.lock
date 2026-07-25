@@ -378,12 +378,14 @@ dependencies = [
 name = "callosium-desktop"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.2.17",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

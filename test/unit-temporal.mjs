@@ -2,7 +2,7 @@
 // event-time layer that lets `recent` surface a note whose real movement is a
 // dated event in its PROSE while the file's own date is stale or bulk-stamped.
 // Run: node test/unit-temporal.mjs
-import { bodyEventDates, parsePeriod } from '../src/recall/temporal.ts';
+import { bodyEventDates, parsePeriod, noteDateInfo } from '../src/recall/temporal.ts';
 
 let pass = 0, fail = 0;
 const U = Date.UTC;
@@ -133,6 +133,33 @@ check('P-ar daily (اليومية) NOT today', per('راجع المهام الي
 check('P-ar fifth (الخامس) NOT yesterday', per('اقرأ الفصل الخامس'), null);
 check('P-ar standalone اليوم still today', per('ماذا فعلت اليوم'), 'today');
 check('P-ar standalone أمس still yesterday', per('ماذا حدث أمس'), 'yesterday');
+
+// ── noteDateInfo — how a note gets its DATE ──────────────────────────────────
+// This function had ZERO coverage, which is why two HIGH date bugs shipped in it.
+// It decides what "what happened last week" returns, so being wrong here means
+// answering confidently with the wrong notes.
+const di = (p, text = '') => noteDateInfo(p, text);
+const isoOf = (r) => (r ? new Date(r.ms).toISOString().slice(0, 10) : null);
+
+// BUG 1: only the FIRST "D Word YYYY" match in the filename was examined, so a
+// title whose first match is not a month ("Phase 2 rollout 2026") took the slot
+// and the real trailing date our own memory/log namer appends was never seen.
+check('date after a non-month "D Word YYYY" is still found',
+  isoOf(di('Memory/Claude/2026/07 Jul/Phase 2 rollout 2026 - 26 Jul 2026.md')), '2026-07-26');
+check('a plain trailing date still works',
+  isoOf(di('Memory/Claude/2026/07 Jul/Session 26 Jul 2026.md')), '2026-07-26');
+
+// BUG 2: the /YYYY/MM Mon/ folder date is always day 1 of the month and was
+// evaluated BEFORE frontmatter, so a month-granular guess overrode a day-precise
+// `updated:` stamp — and was then reported as high confidence.
+const fm = '---\nupdated: 2026-07-19\n---\n\nbody\n';
+check('day-precise frontmatter beats the day-1 folder date',
+  isoOf(di('Memory/Claude/2026/07 Jul/Note.md', fm)), '2026-07-19');
+check('and it is attributed to frontmatter, not the path',
+  di('Memory/Claude/2026/07 Jul/Note.md', fm)?.source, 'front');
+check('the folder date is still used when nothing else dates the note',
+  isoOf(di('Memory/Claude/2026/07 Jul/Note.md', 'no frontmatter here\n')), '2026-07-01');
+check('an undated note returns null', di('Knowledge/Espresso.md', 'no dates at all\n'), null);
 
 console.log(`\n${pass} pass, ${fail} fail`);
 process.exit(fail ? 1 : 0);

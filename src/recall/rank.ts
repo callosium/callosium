@@ -30,6 +30,10 @@ export interface NoteFields {
   bodyTf: Map<string, number>;
   /** body token positions for proximity */
   positions: Map<string, number[]>;
+  /** terms whose `positions` list hit POS_CAP. Their stored list is a PREFIX of
+   *  where the term really occurs, so proximity past its last entry is unknown —
+   *  proximityScore uses this to avoid reporting a span it can't verify. */
+  saturated: Set<string>;
   bodyLen: number;
   headingsLen: number;
   titleLen: number;
@@ -55,6 +59,20 @@ export interface RankIndex {
 }
 
 // Alias parsing lives in ../core/aliases.ts (single source of truth — see P2 #9).
+
+// Per-term ceiling on stored body positions. It exists for COST, not accuracy:
+// uncapped, the proximity merge-scan over the biggest note the indexer accepts
+// (5MB, engine.ts:175 MAX_NOTE_BYTES) measures 23ms for ONE note, and the scan
+// runs over ~100 candidates twice per query (proxLane + tsMatch lane). But the
+// old value of 200 was far too tight and undocumented: measured over a 498-file
+// real-markdown corpus it truncated a term in 18 files, and because a truncated
+// list is a PREFIX, the min-span scan then measured against a stale head of the
+// note and reported the fabricated distance as fact. At 2000, ONE of those 498
+// files still truncates, positions memory grows 6% (uncapped is 6.3% — the cap
+// buys almost nothing on real prose) and the worst-case scan stays ~1ms.
+// Whatever still saturates is recorded, so proximityScore can decline to answer
+// rather than invent (see the horizon guard there).
+const POS_CAP = 2000;
 
 export function buildRankIndex(
   files: string[],
@@ -99,13 +117,15 @@ export function buildRankIndex(
 
     const bodyTf = new Map<string, number>();
     const positions = new Map<string, number[]>();
+    const saturated = new Set<string>();
     const bodyTokens = tokenize(text);
     for (let i = 0; i < bodyTokens.length; i++) {
       const w = bodyTokens[i];
       bodyTf.set(w, (bodyTf.get(w) || 0) + 1);
       let arr = positions.get(w);
       if (!arr) positions.set(w, (arr = []));
-      if (arr.length < 200) arr.push(i);
+      if (arr.length < POS_CAP) arr.push(i);
+      else saturated.add(w);
     }
 
     const nf: NoteFields = {
@@ -115,6 +135,7 @@ export function buildRankIndex(
       headings,
       bodyTf,
       positions,
+      saturated,
       bodyLen: bodyTokens.length,
       headingsLen: headings.length,
       titleLen: title.length,
@@ -236,28 +257,63 @@ export function bm25f(index: RankIndex, note: NoteFields, words: string[]): numb
 // ─── proximity lane (Büttcher-style, top candidates only) ─────────────
 
 export function proximityScore(note: NoteFields, words: string[]): number {
-  const present = words.filter((w) => note.positions.has(w));
+  // DEDUPE first. `words` reaches here raw from tokenize() (engine.ts:1201) and
+  // tokenize never dedupes, so "the old callosium plan and the new callosium
+  // plan" arrived carrying callosium and plan twice each. Two wrong answers came
+  // out of that: the `< 2` guard below was satisfied by ONE distinct term
+  // repeated — ["budget","budget"] scored a PERFECT 1.0, maximum proximity from
+  // a single word — and present/words counted a repeated term twice, so a note
+  // matching 2 of the query's distinct terms outranked one matching 3. That is
+  // the same inversion tsMatchScore already dedupes against before calling in
+  // here; the guard belongs in this function so it holds for every caller.
+  const uniq = [...new Set(words)];
+  const present = uniq.filter((w) => note.positions.has(w));
   if (present.length < 2) return 0;
-  // minimal window containing one position of each present term (greedy scan)
-  const lists = present.map((w) => note.positions.get(w)!);
-  const idxs = lists.map(() => 0);
-  let best = Infinity;
-  // Bound the merge-scan by the ACTUAL number of positions (each step advances one
-  // lane by one), not a fixed 4000 — a term that occurs thousands of times would
-  // otherwise cut the scan short and miss the true minimum span.
-  const guardMax = lists.reduce((s, l) => s + l.length, 0) + 1;
-  for (let guard = 0; guard < guardMax; guard++) {
-    const vals = lists.map((l, i) => l[idxs[i]]);
-    const lo = Math.min(...vals),
-      hi = Math.max(...vals);
-    if (hi - lo < best) best = hi - lo;
-    const loLane = vals.indexOf(lo);
-    if (idxs[loLane] + 1 >= lists[loLane].length) break;
-    idxs[loLane]++;
+  // minimal window containing one position of each given term (greedy scan),
+  // ignoring any window that reaches past `horizon` (see below).
+  const span = (terms: string[], horizon: number): number => {
+    if (terms.length < 2) return 0;
+    const lists = terms.map((w) => note.positions.get(w)!);
+    const idxs = lists.map(() => 0);
+    let best = Infinity;
+    // Bound the merge-scan by the ACTUAL number of positions (each step advances one
+    // lane by one), not a fixed 4000 — a term that occurs thousands of times would
+    // otherwise cut the scan short and miss the true minimum span.
+    const guardMax = lists.reduce((s, l) => s + l.length, 0) + 1;
+    for (let guard = 0; guard < guardMax; guard++) {
+      const vals = lists.map((l, i) => l[idxs[i]]);
+      const lo = Math.min(...vals),
+        hi = Math.max(...vals);
+      // We always advance the LOWEST lane, so `hi` never decreases: once a
+      // window reaches past the horizon, every later one does too.
+      if (hi > horizon) break;
+      if (hi - lo < best) best = hi - lo;
+      const loLane = vals.indexOf(lo);
+      if (idxs[loLane] + 1 >= lists[loLane].length) break;
+      idxs[loLane]++;
+    }
+    if (!isFinite(best)) return 0;
+    // inverse span, scaled by how many terms co-occur
+    return (terms.length / uniq.length) * (1 / (1 + best / terms.length));
+  };
+  // A saturated term's stored positions stop at POS_CAP, so past its last stored
+  // entry we do not know where that term occurs — and a span measured across
+  // that gap is invented, not measured. It used to be reported as fact: a
+  // 25k-token Devlog holding "callosium" 201× and the phrase "callosium
+  // reranker" at token 25,000 scored 0.000153 (span 13,060 against the stale
+  // 200-entry prefix) where the truth is 0.666667 (span 1) — the proximity lane
+  // failing on precisely the long notes it exists to rescue. POS_CAP=2000 makes
+  // that rare; this makes what's left honest. We score only windows inside the
+  // region where every present term's occurrences are fully known, and if there
+  // are none we retry over the terms whose lists are COMPLETE — an exact answer
+  // over less evidence beats a confident answer over none.
+  let horizon = Infinity;
+  for (const w of present) {
+    if (!note.saturated.has(w)) continue;
+    const l = note.positions.get(w)!;
+    horizon = Math.min(horizon, l[l.length - 1]);
   }
-  if (!isFinite(best)) return 0;
-  // inverse span, scaled by how many terms co-occur
-  return (present.length / words.length) * (1 / (1 + best / present.length));
+  return span(present, horizon) || span(present.filter((w) => !note.saturated.has(w)), Infinity);
 }
 
 // ─── graph lane: backlink prior + 1-hop reinforcement from seeds ───────

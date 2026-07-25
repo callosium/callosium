@@ -570,6 +570,18 @@ function callosiumGuideHTML(spec){
     // asks for a name + a Streamable-HTTP URL + a bearer token — exactly these.
     + '<div style="'+lbl+'">'+t('If it shows a “custom MCP” form (Claude · ChatGPT · Kimi · Cursor…): pick <b>Streamable HTTP</b>, run  callosium mcp --http  in a terminal, then paste these three:','لو ظهر نموذج “MCP مخصص” (Claude · ChatGPT · Kimi · Cursor…): اختر <b>Streamable HTTP</b>، وشغّل  callosium mcp --http ، ثم الصق هذه الثلاثة:')+'</div>'
     + box('◍', t('name','الاسم'), 'name', 'Callosium')
+    // If the endpoint that URL points at never bound, say so HERE — next to the box the user is
+    // about to copy. Handing out a URL for a port nothing is listening on sends them to debug their
+    // AI client for a failure that is on our side. The usual cause is a previous Callosium that
+    // outlived its window and still holds the port, which is worse than a dead endpoint: the
+    // client would reach THAT instance's brain instead of this one.
+    + (state.mcp && state.mcp.live === false && state.mcp.error !== 'starting'
+        ? '<div style="'+lbl+';border:1px solid var(--danger);border-left:3px solid var(--danger);padding:10px 12px;color:var(--starlight)">'
+          + t('⚠ The local MCP endpoint is not running right now, so this URL will not answer. ','⚠ نقطة MCP المحلية لا تعمل الآن، لذا لن يستجيب هذا الرابط. ')
+          + esc(String(state.mcp.error || ''))
+          + t('. Another Callosium may still be holding the port — quit it (check the tray), then restart. The config-file option below uses a command instead of a URL and still works.','. قد يكون هناك كالوسيوم آخر ما زال يحجز المنفذ — أغلقه ثم أعد التشغيل. خيار ملف الإعداد بالأسفل يعمل عبر أمر بدل الرابط ولا يتأثر.')
+          + '</div>'
+        : '')
     + box('⚇', t('MCP server URL','رابط خادم MCP'), 'url', ut.url)
     + box('⚿', t('bearer token','رمز الوصول'), 'token', ut.token)
     // The env-var trap: some clients (Codex, Kimi Code, and others) label the
@@ -606,6 +618,7 @@ async function loadOverview(){
     // onboarded=false and boot() restarted onboarding for a set-up user.
     if(o && o.httpStatus){ state.overviewFailed = true; return; }
     state.overview = o; state.overviewFailed = false;
+    state.mcp = o.mcp || null; // whether the local MCP endpoint actually bound — see the connect guide
     if(!o.onboarded){ return; } // boot() decides whether to show onboarding
     const v = o.vitals||{};
     state.targets = [v.notes||0, v.connections||0, v.health||0, v.meaningPoints||0, v.agents||0];
@@ -654,8 +667,10 @@ function nav(id){
   // rAF loop, resize + window-mouseup listeners are released deterministically
   // on exit rather than lingering for the rest of the session.
   if(state.screen==='map' && id!=='map' && window.map_teardown){ try{ map_teardown(); }catch(e){} }
-  // Leaving Settings mid-reindex: close its EventSource so the SSE stream + its
-  // handlers don't linger (and keep re-rendering an unmounted screen).
+  // Leaving Settings: let the screen tear down its own listeners so they don't linger and keep
+  // re-rendering an unmounted screen. st_teardown no longer kills an in-flight re-index — closing
+  // that EventSource tripped the server's req.on('close') abort, so simply navigating away
+  // cancelled the rebuild silently, mid-write. It now leaves a running index alone.
   if(state.screen==='settings' && id!=='settings' && window.st_teardown){ try{ st_teardown(); }catch(e){} }
   state.screen=id; renderNav(); render();
 }
@@ -1204,8 +1219,15 @@ function reindex(){
   const btn=$('#reindexBtn'); btn.textContent='re-indexing…'; btn.style.color='var(--danger)'; btn.style.borderColor='var(--danger)';
   announce('re-indexing your brain');
   const es=new EventSource(CCT_Q('/api/ingest'));
-  const done=async(reload)=>{ es.close(); state.reindexing=false; busyCursor(false); btn.textContent='re-index'; btn.style.color='var(--danger)'; btn.style.borderColor='var(--danger)';
-    announce(reload ? 'index updated' : 're-index failed');
+  // A failed re-index must LOOK failed. This used to drop straight back to the idle 're-index'
+  // label, which is the same thing a success leaves behind — so a stream that died mid-way was
+  // indistinguishable from one that finished, and the user carried on believing their brain had
+  // been rebuilt. The button holds a visible failed state until the next attempt.
+  const done=async(reload)=>{ es.close(); state.reindexing=false; busyCursor(false);
+    btn.textContent = reload ? 're-index' : 're-index failed — retry';
+    btn.style.color='var(--danger)'; btn.style.borderColor='var(--danger)';
+    btn.title = reload ? '' : 'The re-index stopped before it finished. Your brain was not fully rebuilt — click to try again.';
+    announce(reload ? 'index updated' : 're-index failed — your brain was not rebuilt');
     if(reload){ await loadOverview(); await loadActivity(); if(state.screen==='overview') render(); } };
   es.addEventListener('phase',e=>{ try{ const d=JSON.parse(e.data); btn.textContent=d.label+'…'; announce(d.label); }catch(_){} });
   es.addEventListener('done',()=>done(true));

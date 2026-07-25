@@ -24,6 +24,18 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# For the per-launch handshake token. Already in the tree via tauri; made direct so the token comes
+# from the OS CSPRNG instead of clock+pid, which are both readable by any other local process.
+getrandom = "0.2"
+
+# Job Objects, so the OS kills the server process whenever the shell dies — see bind_child_lifetime.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_System_JobObjects",
+    "Win32_System_Threading", # JOBOBJECT_EXTENDED_LIMIT_INFORMATION lives behind this one
+    "Win32_Security",         # CreateJobObjectW's lpJobAttributes
+    "Win32_Foundation",
+] }
 
 [profile.release]
 # The shell just spawns the Node server + manages tray/window — its size and

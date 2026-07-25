@@ -13,7 +13,7 @@
 import type { BrainSchema } from '../core/types.ts';
 import type { VaultTexts } from '../recall/engine.ts';
 import type { Vault } from '../core/vault.ts';
-import { partitionPaths } from '../core/schema.ts';
+import { partitionOf, partitionPaths } from '../core/schema.ts';
 
 /** Canonical in-vault home for the generated map. Under System/ (managed by
  *  Callosium) so it isn't confused with the owner's own notes, and it travels
@@ -118,12 +118,21 @@ export function generateMap(schema: BrainSchema, texts: VaultTexts): string {
     if (lay.length) structOf.set(p.path, lay);
   }
 
-  // Group live notes by top-level folder (skip the managed System/ internals and
-  // verbatim Raw/ dumps so the map shows navigable knowledge, not plumbing).
+  // Group live notes by the partition that OWNS them (skip the managed System/
+  // internals; verbatim Raw/ dumps are skipped further down so the map shows
+  // navigable knowledge, not plumbing). Keyed by the DEEPEST matching partition
+  // — the same longest-prefix rule partitionOf uses everywhere else — not by the
+  // first path segment: a schema may declare a MULTI-segment partition
+  // ("Work/Projects"), and keying on seg[0] meant that key never existed, so
+  // `partOrder.filter(byTop.has)` below silently dropped it. The result was a
+  // partition with no section, no job, no layout and no subfolder lines: its
+  // notes were counted under the parent while its entire structure was invisible
+  // to the AI reading the map — the identical top-segment-only bug partitionOf
+  // was fixed for. Folders the schema doesn't know still fall back to seg[0].
   const byTop = new Map<string, string[]>();
   for (const f of texts.files) {
     if (f.startsWith('System/')) continue;
-    const top = f.includes('/') ? f.split('/')[0] : '(root)';
+    const top = partitionOf(schema, f) ?? (f.includes('/') ? f.split('/')[0] : '(root)');
     (byTop.get(top) ?? byTop.set(top, []).get(top)!).push(f);
   }
 
@@ -140,6 +149,10 @@ export function generateMap(schema: BrainSchema, texts: VaultTexts): string {
   const hubs: string[] = [];
   for (const top of tops) {
     const files = byTop.get(top)!;
+    // How many segments the partition itself occupies. Everything below is
+    // measured from HERE, not from seg[0], so a multi-segment partition's own
+    // path is never repeated inside its subfolder lines.
+    const topDepth = top === '(root)' ? 0 : top.split('/').length;
     // anchor picks: hubs first, then shallow notes; cap the noise.
     const anchors: string[] = [];
     // Subfolders under this top — surfaced as their own nodes with a note count +
@@ -156,22 +169,20 @@ export function generateMap(schema: BrainSchema, texts: VaultTexts): string {
       const t = texts.texts.get(f) || '';
       const isH = isHub(f, t);
       if (isH) hubs.push(baseName(f));
-      if (f.split('/').length <= 2 && !/\/Raw\//.test(f)) anchors.push(baseName(f));
       const seg = f.split('/');
-      if (seg[0] !== top || /\/Raw\//.test(f)) continue;
-      // Skip when top/seg[1] is itself a configured partition (a slashed
-      // partition path like Work/Projects) — that folder is a partition with its
-      // own job, not an ad-hoc subfolder to surface with a ↳ sub-node.
-      if (seg.length >= 3 && known.has(`${top}/${seg[1]}`)) continue;
-      // Register this note against EVERY ancestor folder under `top`, to the cap.
+      if (seg.length === topDepth + 1 && !/\/Raw\//.test(f)) anchors.push(baseName(f));
+      if (/\/Raw\//.test(f)) continue;
+      // Register this note against EVERY ancestor folder BELOW `top`, to the cap.
       // seg.length - 1 is one past the deepest folder index (the last seg is the file).
-      for (let d = 2; d <= Math.min(seg.length - 1, 1 + MAX_SUB_DEPTH); d++) {
+      // No ancestor here can itself be a partition: a note under a nested
+      // partition was grouped under THAT partition, so it never reaches here.
+      for (let d = topDepth + 1; d <= Math.min(seg.length - 1, topDepth + MAX_SUB_DEPTH); d++) {
         // Stop at date scaffolding: the note still counts toward every topical
         // ancestor above, but no year/month/day folder becomes its own node.
         if (isDateSegment(seg[d - 1])) break;
-        const rel = seg.slice(1, d).join('/');
+        const rel = seg.slice(topDepth, d).join('/');
         if (!rel) continue;
-        const cur = subs.get(rel) ?? { count: 0, hub: null, depth: d - 1 };
+        const cur = subs.get(rel) ?? { count: 0, hub: null, depth: d - topDepth };
         cur.count++;
         // A folder's hub must sit DIRECTLY in it — not in a deeper sibling — or a
         // parent would inherit a child's hub and mislabel the topic.
@@ -190,20 +201,46 @@ export function generateMap(schema: BrainSchema, texts: VaultTexts): string {
     // new folder one, so following the doctrine makes a new area visible here
     // immediately) or holds ≥2 notes. SELECT by importance, then RENDER in path
     // order so parents print above their children and the indentation reads as a
-    // tree. A parent's count includes its descendants, so a picked child's ancestors
-    // qualify too — the tree never renders orphaned.
+    // tree.
     const eligible = [...subs.entries()].filter(([, v]) => v.hub || v.count >= 2);
     const SUB_LIMIT = 20;
-    const subLines = eligible
+    const picked = eligible
       .sort((a, b) => (b[1].hub ? 1 : 0) - (a[1].hub ? 1 : 0) || b[1].count - a[1].count)
       .slice(0, SUB_LIMIT)
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([rel, v]) => {
-        const leaf = rel.split('/').pop()!;
-        return `  ${'  '.repeat(v.depth - 1)}↳ ${leaf}/ (${v.count} note${v.count === 1 ? '' : 's'})${v.hub ? ` — hub: [[${v.hub}]]` : ''}`;
+      .map(([rel]) => rel);
+    // Then pull in every ANCESTOR of a picked folder. The old code assumed a
+    // parent always outranks its child ("a parent's count includes its
+    // descendants") — it does not: hub-bearing children sort ahead of every
+    // hubless parent, and a parent holding a single note isn't eligible at all.
+    // On a 25-client vault the cap kept twenty depth-2 folders and dropped all
+    // twenty-five parents, so the map printed twenty indented lines with no
+    // parent above them. Ancestors are shown even when they didn't earn a line
+    // on their own — an indentation level whose parent is missing is a lie about
+    // where the folder lives, and the map is what an AI files by. Ancestors are
+    // the only thing that can push the block past SUB_LIMIT, and they bound it at
+    // SUB_LIMIT × MAX_SUB_DEPTH; naming a folder correctly is worth those lines.
+    const shown = new Set(picked);
+    for (const rel of picked) {
+      const parts = rel.split('/');
+      for (let i = 1; i < parts.length; i++) {
+        const anc = parts.slice(0, i).join('/');
+        if (subs.has(anc)) shown.add(anc);
+      }
+    }
+    const subLines = [...shown]
+      .sort((a, b) => a.localeCompare(b))
+      .map((rel) => {
+        const v = subs.get(rel)!;
+        // Print the path RELATIVE TO THE PARTITION, not the leaf name. The leaf
+        // alone left the real path to be inferred from indentation, so twenty
+        // sibling "Engagement/" folders rendered as twenty identical lines and
+        // an AI could not tell which client any of them belonged to. A line now
+        // names its own folder no matter what else got printed.
+        return `  ${'  '.repeat(v.depth - 1)}↳ ${rel}/ (${v.count} note${v.count === 1 ? '' : 's'})${v.hub ? ` — hub: [[${v.hub}]]` : ''}`;
       });
     // Never truncate silently — a hidden folder is a folder an AI will not file into.
-    if (eligible.length > SUB_LIMIT) subLines.push(`  … +${eligible.length - SUB_LIMIT} more subfolders (call list_notes to see them)`);
+    const hidden = eligible.filter(([rel]) => !shown.has(rel)).length;
+    if (hidden) subLines.push(`  … +${hidden} more subfolders (call list_notes to see them)`);
     lines.push(...subLines);
     sections.push(lines.join('\n'));
   }
@@ -256,13 +293,24 @@ export function generateFilingRules(schema: BrainSchema, canSee?: (partitionPath
   // Drop any rule line that names a partition this agent can't see (paths appear
   // as "<Path>/" in the schema's prose). Owner/CLI (no canSee) drops nothing.
   const deniedPaths = canSee ? allParts.filter((p) => !canSee(p.path)).map((p) => p.path) : [];
-  const mentionsDenied = (s: string) => deniedPaths.some((dp) => s.includes(dp + '/'));
+  // Match a denied partition wherever it is used as a PATH EXPRESSION — the name
+  // itself plus everything hanging off it ("Work/Projects/<Name>/Raw/"), bounded
+  // so "Homework/" never counts as "Work/". Matching only the literal "<Path>/"
+  // prefix (the old test) let the tail survive the redaction: with the shipped
+  // schema a Work-denied agent read "named to never collide with a private
+  // areaProjects" — the hidden partition's child folder leaked verbatim, inside
+  // a nonsense token, in the rules an LLM is told to follow. Names with no
+  // trailing slash count too: a rule that says "goes to Private" discloses the
+  // folder just as plainly as "Private/".
+  const escRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const deniedRe = deniedPaths.map((dp) => new RegExp(`(?<![\\w-])${escRe(dp)}(?:\\/[^\\s,;.)]*)?(?![\\w-])`, 'g'));
+  const mentionsDenied = (s: string) => deniedRe.some((re) => { re.lastIndex = 0; return re.test(s); });
   // A partition's OWN free text (job, layout, gate topics) can incidentally name
   // another partition by path (e.g. a job that reads "successor to Private/").
-  // Scrub any denied "<Path>/" out of that prose too, so a restricted agent can't
+  // Scrub any denied path out of that prose too, so a restricted agent can't
   // learn a hidden folder exists through a visible partition's description. This
   // is a no-op for the owner/CLI (deniedPaths is empty).
-  const scrubDenied = (s: string) => deniedPaths.reduce((acc, dp) => acc.split(dp + '/').join('a private area'), s);
+  const scrubDenied = (s: string) => deniedRe.reduce((acc, re) => acc.replace(re, 'a private area'), s);
   // gateTopics is hand-editable JSON — coerce to a clean string[] so a malformed
   // value (a bare string, null, numbers) can't throw and take down the whole
   // rules render for every caller.

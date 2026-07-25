@@ -64,6 +64,27 @@ const unsafePartitionPath = (pp: unknown): boolean =>
   /[\x00-\x1f]/.test(pp) || // NUL/control bytes → reject before init scaffolds a bad path
   pp.split(/[\\/]/).includes('..');
 
+/** The canonical form of a partition path: forward slashes, no `./`, no leading,
+ *  trailing or doubled separators. Every consumer compares partition paths as
+ *  EXACT forward-slash strings — partitionOf tests `startsWith(p + '/')`,
+ *  generateMap's `known` set and generateFilingRules do plain lookups — so a
+ *  non-canonical but harmless-looking value silently detached the partition from
+ *  its own folder. brain.json is documented as hand-editable, and one trailing
+ *  slash on `"path": "Work/"` was enough: partitionOf('Work/Projects/Acme.md')
+ *  returned undefined, filing stopped conformance-checking every Work note, and
+ *  the Brain Map rendered the partition with its declared layout GONE — the exact
+ *  regression map.ts's layoutOf comment says made two agents invent two different
+ *  shapes for the same folder. `callosium check` still said schema=brain.
+ *  Normalising here, at the one place a schema becomes trusted, is what keeps
+ *  every downstream exact match honest — patching each consumer would leave the
+ *  next one to rediscover this. */
+const canonPartitionPath = (pp: string): string =>
+  pp
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter((seg) => seg !== '' && seg !== '.')
+    .join('/');
+
 export function validateSchema(x: unknown): BrainSchema {
   const s = x as BrainSchema;
   const fail = (msg: string) => {
@@ -71,7 +92,10 @@ export function validateSchema(x: unknown): BrainSchema {
   };
   if (!s || typeof s !== 'object') fail('not an object');
   if (!s.schemaVersion) fail('missing schemaVersion');
-  if (!s.partitions?.core?.length) fail('missing partitions.core');
+  // Array.isArray, not just .length: a hand-edit that leaves partitions.core a
+  // string has a truthy .length and would iterate CHARACTERS below.
+  if (!Array.isArray(s.partitions?.core) || !s.partitions.core.length) fail('missing partitions.core');
+  if (s.partitions.modules !== undefined && !Array.isArray(s.partitions.modules)) fail('partitions.modules is not a list');
   if (!Array.isArray(s.noteTypes) || !s.noteTypes.length) fail('missing noteTypes');
   if (!Array.isArray(s.frontmatter?.required)) fail('missing frontmatter.required');
   for (const p of s.partitions.core) {
@@ -82,11 +106,20 @@ export function validateSchema(x: unknown): BrainSchema {
     if (unsafePartitionPath(p.path)) {
       fail(`unsafe partition path (absolute or traversal): ${JSON.stringify(p.path)}`);
     }
+    const canon = canonPartitionPath(p.path);
+    if (!canon) fail(`partition path is empty once normalised: ${JSON.stringify(p.path)}`);
+    p.path = canon;
   }
   for (const p of s.partitions.modules ?? []) {
-    if (p.path && unsafePartitionPath(p.path)) {
+    // A falsy module path used to skip validation entirely and then flow into
+    // partitionPaths as an empty string, giving the map a nameless section.
+    if (!p.path) fail(`module partition missing path: ${JSON.stringify(p)}`);
+    if (unsafePartitionPath(p.path)) {
       fail(`unsafe module partition path: ${JSON.stringify(p.path)}`);
     }
+    const canon = canonPartitionPath(p.path);
+    if (!canon) fail(`module partition path is empty once normalised: ${JSON.stringify(p.path)}`);
+    p.path = canon;
   }
   return s;
 }

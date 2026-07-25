@@ -213,9 +213,12 @@ async function main() {
       const vault = Vault.open(brainPath());
       const r = await brainCheck(vault);
       console.log(`callosium check — ${r.notes} notes, ${r.edges} edges, schema=${r.schemaSource}, ${r.ms}ms`);
+      // A check that did not RUN must never read as a check that passed — print the omissions
+      // before the findings, so "No findings. Clean brain." can't be the whole story.
+      for (const s of r.skipped) console.log(`  ! ${s.check} DID NOT RUN — ${s.reason}`);
       const entries = Object.entries(r.byKind).sort((a, b) => b[1] - a[1]);
       if (!entries.length) {
-        console.log('No findings. Clean brain.');
+        console.log(r.skipped.length ? 'No findings from the checks that ran.' : 'No findings. Clean brain.');
         break;
       }
       for (const [kind, n] of entries) console.log(`  ${String(n).padStart(5)}  ${kind}`);

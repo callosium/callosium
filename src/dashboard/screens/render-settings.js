@@ -133,10 +133,30 @@ function renderSettings(){
     ? `<div style="font-family:var(--mono);font-size:11px;color:var(--danger);padding:0 18px 12px;line-height:1.6">${esc(state.st_openFolderErr)}</div>`
     : '';
 
+  // ── re-index failure line (rendered under BOTH the re-index and the rebuild
+  // row — one run, two buttons). Without it a failed run just put the button
+  // back to "re-index now", which looks identical to a run that finished.
+  const reindexErr = state.st_reindexErr
+    ? `<div style="font-family:var(--mono);font-size:11px;color:var(--danger);padding:0 18px 12px;line-height:1.6">${esc(state.st_reindexErr)}</div>`
+    : '';
+
   // ── account panel (real GET /api/account + POST /api/signout) ──
+  // FOUR states, not three. "the request failed" is NOT "signed out": treating
+  // them as one told a signed-in user "you're not signed in" whenever the engine
+  // blipped (a restarting sidecar, a wake-from-sleep, any 500) — and because the
+  // panel only re-fetches while st_account is undefined, that false claim stuck
+  // for the rest of the session. Same distinction the shell's loadAccount makes.
   const acct = state.st_account;   // undefined = loading · null = signed out · object = signed in
   let acctInner;
-  if(acct===undefined){
+  if(state.st_accountFailed){
+    acctInner = `<div style="display:flex;align-items:center;gap:14px;padding:16px 18px">
+        <div style="flex:1;min-width:0">
+          <div style="font-size:14px;color:var(--starlight)">${L("couldn't check your account",'تعذّر التحقق من حسابك')}</div>
+          <div style="font-size:13.5px;color:var(--dust);margin-top:4px;max-width:64ch">${L('the local engine didn’t answer just now — your account and your notes are safe on disk. this says nothing about whether you’re signed in.','لم يستجب المحرّك المحلي الآن — حسابك وملاحظاتك آمنة على القرص. هذا لا يعني شيئًا عن كونك مسجّل الدخول أم لا.')}</div>
+        </div>
+        <button id="stAcctRetry" style="${st_btnStyle()}" onmouseenter="this.style.borderColor='var(--synapse)';this.style.color='var(--synapse)'" onmouseleave="this.style.borderColor='var(--edge2)';this.style.color='var(--dust)'">${L('try again','أعد المحاولة')}</button>
+      </div>${state.st_accountErr?`<div style="font-family:var(--mono);font-size:11px;color:var(--danger);padding:0 18px 12px;line-height:1.6">${esc(state.st_accountErr)}</div>`:''}`;
+  } else if(acct===undefined){
     acctInner = `<div style="padding:16px 18px;font-family:var(--mono);font-size:12px;color:var(--faint)">${L('checking your account…','...جارٍ التحقق من حسابك')}</div>`;
   } else if(!acct){
     acctInner = `<div style="padding:16px 18px">
@@ -203,6 +223,7 @@ function renderSettings(){
           <div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--starlight)">${L('re-index','إعادة الفهرسة')}</div><div style="font-size:13.5px;color:var(--dust);margin-top:3px">${L('re-read your files and refresh connections.','إعادة قراءة ملفاتك وتحديث الروابط.')}</div></div>
           <button id="stReindexBtn"${reindexing?' disabled':''} style="font-family:var(--mono);font-size:11px;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--synapse);color:var(--synapse-ink);background:transparent;padding:8px 14px;border-radius:0;cursor:${reindexing?'default':'pointer'};opacity:${reindexing?'.6':'1'};flex-shrink:0" ${reindexing?'':`onmouseenter="this.style.background='var(--synapse)';this.style.color='var(--on-accent)'" onmouseleave="this.style.background='transparent';this.style.color='var(--synapse-ink)'"`}>${esc(reindexLabel)}</button>
         </div>
+        ${reindexErr}
         ${st_uiOnlyNote(t('editing the name updates the top bar live, but there is no name-save endpoint yet — so it resets on reload.','تعديل الاسم يحدّث الشريط العلوي مباشرةً، لكن لا يوجد بعد مسار لحفظ الاسم — لذا يعود كما كان عند إعادة التحميل.'))}
       </div>
 
@@ -267,6 +288,7 @@ function renderSettings(){
           <div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--starlight)">${L('rebuild index from scratch','أعد بناء الفهرس من الصفر')}</div><div style="font-size:13.5px;color:var(--dust);margin-top:3px">${L('fixes rare glitches. never touches your notes.','يعالج أعطالًا نادرة. لا يمسّ ملاحظاتك أبدًا.')}</div></div>
           <button id="stRebuildBtn"${reindexing?' disabled':''} style="${st_btnStyle()};opacity:${reindexing?'.6':'1'};cursor:${reindexing?'default':'pointer'}" ${reindexing?'':`onmouseenter="this.style.borderColor='var(--amber)';this.style.color='var(--amber)'" onmouseleave="this.style.borderColor='var(--edge2)';this.style.color='var(--dust)'"`}>${esc(rebuildLabel)}</button>
         </div>
+        ${reindexErr}
         ${st_uiOnlyNote(t('the desktop app updates itself automatically (via Tauri) — this just checks GitHub for the latest version.','يحدّث تطبيق سطح المكتب نفسه تلقائيًا (عبر Tauri) — هذا يتحقق فقط من GitHub لأحدث إصدار.'))}
       </div>
 
@@ -276,7 +298,9 @@ function renderSettings(){
   st_wire();
 
   // ── non-blocking data fetches (once each) ──
-  if(state.st_account===undefined && !state.st_accountLoading) st_loadAccount();
+  // st_accountFailed keeps st_account undefined without re-firing the fetch on
+  // every repaint — the retry button is the way back out.
+  if(state.st_account===undefined && !state.st_accountLoading && !state.st_accountFailed) st_loadAccount();
   if(state.st_update===undefined && !state.st_updChecking) st_checkUpdates();
 }
 
@@ -366,6 +390,10 @@ function st_wire(){
   // sign out — real POST /api/signout, then reload so onboarding shows again
   const so = $('#stSignOut'); if(so) so.addEventListener('click', st_signOut);
 
+  // retry the account fetch after an engine blip (clears the failed flag so the
+  // auto-fetch guard in renderSettings lets it through again)
+  const ar = $('#stAcctRetry'); if(ar) ar.addEventListener('click', ()=>{ state.st_accountFailed = false; state.st_accountErr = null; renderSettings(); });
+
   // check for updates — real GET /api/update/check
   const cu = $('#stCheckUpdates'); if(cu) cu.addEventListener('click', st_checkUpdates);
 
@@ -373,10 +401,19 @@ function st_wire(){
   const up = $('#stUpdateBtn'); if(up) up.addEventListener('click', ()=>{ window.open('https://github.com/callosium/callosium/releases','_blank','noopener'); });
 }
 
-// Close a live re-index stream when leaving Settings (called from nav()), so the
-// SSE connection and its onmessage handler don't linger after the screen unmounts.
+// Called from nav() when Settings unmounts. It used to close a live re-index
+// stream — but closing the EventSource trips the server's req.on('close') abort,
+// and the next `if (aborted) return` bails out BEFORE setBrain() and writeMap().
+// So clicking any nav item mid-rebuild threw the whole run away: every second of
+// scan/graph/embed work spent, the in-memory caches never reset, System/Map.md
+// never regenerated — and nothing said so, because "aborted" and "finished" both
+// just put the button back. The top-bar re-index (the SAME run) has always
+// survived navigation; there is no reason the Settings copy should not.
+// Leave a live run alone: every handler below is unmount-safe already (each DOM
+// write is `if(el)`-guarded and the repaint is screen-gated), so the stream can
+// finish with Settings off-screen and be found still running on return.
 window.st_teardown = function(){
-  if(state.st_reindexES){ try{ state.st_reindexES.close(); }catch(e){} state.st_reindexES = null; }
+  if(state.st_reindexES) return;
   state.st_reindexing = false;
   state.st_reindexPhase = null;
 };
@@ -386,6 +423,7 @@ function st_reindex(full){
   if(state.st_reindexing) return;
   state.st_reindexing = true;
   state.st_reindexPhase = t('starting…','...جارٍ البدء');
+  state.st_reindexErr = null;             // a new run clears the previous failure
   renderSettings();
   // 'rebuild from scratch' passes full=1 so the request is distinct from a plain
   // re-index — today the engine does a full re-scan either way (both honestly
@@ -398,11 +436,12 @@ function st_reindex(full){
     const b = $('#stRebuildBtn'); if(b) b.textContent = label;
     announce(label);
   };
-  const done = async (reload)=>{
+  const done = async (reload, err)=>{
     es.close();
     state.st_reindexES = null;
     state.st_reindexing = false;
     state.st_reindexPhase = null;
+    state.st_reindexErr = reload ? null : (err || t("re-index didn’t finish — the local engine stopped the run.",'لم تكتمل إعادة الفهرسة — أوقف المحرّك المحلي العملية.'));
     announce(reload ? 'index updated' : 're-index failed');
     if(reload){
       try{ await loadOverview(); await loadActivity(); }catch(_){}
@@ -412,7 +451,18 @@ function st_reindex(full){
   };
   es.addEventListener('phase', e=>{ try{ const d=JSON.parse(e.data); if(d&&d.label) setPhase(d.label+'…'); }catch(_){} });
   es.addEventListener('done', ()=>done(true));
-  es.addEventListener('error', ()=>done(false));
+  // The stream reports failure two ways and both were being thrown away: a
+  // server-sent `event: error` carries the real reason in e.data (the single-
+  // ingest guard's "an import is already running", a permitted-folder refusal, a
+  // scan throw), and a transport drop carries nothing. announce() alone put it in
+  // the hidden live region only — on screen the button just went back to
+  // "re-index now", which is exactly what SUCCESS looks like. Surface it inline,
+  // the way every other action on this screen already does.
+  es.addEventListener('error', e=>{
+    let msg = null;
+    try{ const d = JSON.parse(e && e.data); if(d && d.message) msg = String(d.message); }catch(_){}
+    done(false, msg);
+  });
 }
 
 // ── real open-folder (POST /api/open-folder → opens the OS file explorer) ──
@@ -453,14 +503,23 @@ async function st_signOut(){
 }
 
 // ── real account fetch (GET /api/account) ──
+// api() resolves on every status, so a 500 body used to read as "no account" and
+// this wrote null — the sentinel for signed OUT. Check .httpStatus first (same
+// test the shell's loadAccount uses) and record the failure separately: a
+// request that didn't land tells us nothing about whether the user is signed in,
+// and the panel must not assert either way.
 async function st_loadAccount(){
   if(state.st_accountLoading) return;
   state.st_accountLoading = true;
+  state.st_accountFailed = false;
+  state.st_accountErr = null;
   try{
     const r = await api('/api/account');
-    state.st_account = (r && 'account' in r) ? r.account : null;
+    if(r && r.httpStatus){ state.st_accountFailed = true; state.st_accountErr = r.error; }
+    else state.st_account = (r && 'account' in r) ? r.account : null;
   }catch(_){
-    state.st_account = null;
+    state.st_accountFailed = true;
+    state.st_accountErr = t("couldn't reach the local app.",'تعذّر الوصول إلى التطبيق المحلي.');
   }
   state.st_accountLoading = false;
   if(state.screen==='settings') renderSettings();

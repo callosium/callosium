@@ -34,20 +34,35 @@
     <div class="hint" id="hint">
       First launch downloads a small language model (~120&nbsp;MB, once) for meaning-based
       search — keyword search works immediately either way. If this screen stays a while,
-      it's just that. <br /><a href="http://127.0.0.1:4319" id="manual">open manually</a>
+      it's just that. <br /><a id="manual" hidden></a>
     </div>
     <script>
-      // Primary path: the native shell navigates this window to the dashboard the
-      // moment the server is up. Belt-and-braces: also poll from here and redirect,
-      // in case navigation is delayed.
-      var URL_ = "http://127.0.0.1:4319";
-      function tryGo() {
-        fetch(URL_, { mode: "no-cors", cache: "no-store" })
-          .then(function () { location.replace(URL_); })
-          .catch(function () {});
+      // This page does NOT navigate itself, deliberately. It used to: it polled a
+      // hard-coded http://127.0.0.1:4319 and redirected as soon as anything answered.
+      // The shell does not run the server on 4319 — it asks the OS for a free port and
+      // then verifies, over a per-launch token, that the thing listening there is the
+      // server IT started. Polling a guessed port threw all of that away: whatever else
+      // held 4319 (a `callosium serve` in a terminal on a different brain, or any other
+      // local process — loopback is not user-isolated on Windows) got loaded into this
+      // trusted native window, unverified. The window hosts the sign-in flow, so that is
+      // a credential-phishing surface, not just a wrong-vault bug. It also silently
+      // overwrote the shell's own "couldn't start" error screen, since the interval kept
+      // firing after the error was shown.
+      //
+      // The shell owns navigation now (see wait_for_server / w.navigate in lib.rs). All
+      // this page does is offer the real URL as text once the shell tells us what it is —
+      // never as an automatic redirect, and never a port we guessed.
+      // The shell may eval its __CAL_URL before OR after this script runs, so handle both orders:
+      // check once now, and expose a setter it can call if it got here first.
+      function showManual(u) {
+        if (typeof u !== "string" || !/^http:\/\/127\.0\.0\.1:\d+$/.test(u)) return;
+        var a = document.getElementById("manual");
+        a.href = u;
+        a.textContent = "open manually";
+        a.hidden = false;
       }
-      setInterval(tryGo, 900);
-      tryGo();
+      window.__calSetUrl = showManual;
+      showManual(window.__CAL_URL);
       setTimeout(function () { document.getElementById("hint").classList.add("show"); }, 6000);
     </script>
   </body>

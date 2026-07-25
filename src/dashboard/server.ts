@@ -52,6 +52,10 @@ try {
 
 // ── in-memory session state (one brain per running server) ──
 let brainPath: string | null = null;
+// Did the auto-started MCP endpoint actually bind? Module-level because handleState reports it and
+// serveDashboard sets it. The connect guide shows a URL + token for this endpoint, so when it never
+// came up the UI has to say so rather than hand out config for a port nothing is listening on.
+let mcpStatus: { live: boolean; error?: string } = { live: false, error: 'not started' };
 
 // Persist the connected brain (best-effort, atomic temp+rename) so a restart
 // reconnects automatically. A persistence failure must NEVER break serving.
@@ -817,6 +821,7 @@ async function handleState(res: http.ServerResponse) {
     notes: texts.files.length,
     partitions,
     agents: reg.agents.map((a) => ({ id: a.id, displayName: a.displayName })),
+    mcp: mcpStatus,
   });
 }
 
@@ -849,6 +854,10 @@ async function handleOverview(res: http.ServerResponse) {
     lastEditedMs: maxMtime(texts.mtimes),
     partitions,
     agents: reg.agents.map((a) => ({ id: a.id, displayName: a.displayName })),
+    // Rides on overview because that is what the UI actually polls (/api/state is the desktop
+    // shell's handshake, not a screen's data source). The connect guide needs it: it prints a URL
+    // and a token for this endpoint, and must not do that when nothing is listening.
+    mcp: mcpStatus,
   });
 }
 
@@ -996,7 +1005,10 @@ async function handleCheck(res: http.ServerResponse) {
   const dismissedList = Object.values(dismissed).filter((d) => presentKeys.has(d.key));
   // send a generous slice (not 200): the Health screen lists affected notes per
   // finding kind, so each kind needs enough examples even when one kind is huge.
-  send(res, 200, { notes: report.notes, edges: report.edges, health, byKind, findings: active.slice(0, 4000), dismissed: dismissedList, dismissedCount: dismissedList.length });
+  // `skipped` rides along so the Health card can say a check DIDN'T RUN instead of showing a score
+  // that quietly counts it as passed — a vault whose own brain.json failed to load would otherwise
+  // see its format findings drop to zero and read that as an improvement.
+  send(res, 200, { notes: report.notes, edges: report.edges, health, byKind, findings: active.slice(0, 4000), dismissed: dismissedList, dismissedCount: dismissedList.length, skipped: report.skipped, schemaSource: report.schemaSource });
 }
 
 // Owner dismisses / restores a single finding (persisted). No dropCache: the
@@ -1681,7 +1693,21 @@ async function handleSignup(res: http.ServerResponse, body: Json) {
   }
 }
 async function handleSignout(res: http.ServerResponse) {
-  await fs.rm(ACCOUNT_FILE, { force: true }).catch(() => {});
+  // Never claim a sign-out we didn't perform. The old `.catch(() => {})` + a
+  // hard-coded {ok:true} meant an EPERM/EBUSY on the delete (an AV scanner or
+  // the search indexer holding account.json — an ordinary Windows condition)
+  // still answered "signed out". The client deliberately only reloads on a
+  // CONFIRMED success (render-settings.js st_signOut), so that lie sent the user
+  // straight back into the signed-in dashboard, same name, no error anywhere.
+  // The existsSync re-check covers the other half: a `rm` that resolves while
+  // the record survives (a delete-pending handle) is still a failed sign-out.
+  // force:true keeps "already signed out" a success — ENOENT never rejects.
+  try {
+    await fs.rm(ACCOUNT_FILE, { force: true });
+    if (existsSync(ACCOUNT_FILE)) throw new Error('the account record is still on disk');
+  } catch {
+    return send(res, 500, { error: 'Could not remove the local account record — a file lock may be holding it. Try again.' });
+  }
   send(res, 200, { ok: true });
 }
 
@@ -1721,6 +1747,7 @@ async function handleInit(res: http.ServerResponse, body: Json) {
 export async function serveDashboard(opts: { port?: number; brain?: string; mcpPort?: number } = {}): Promise<ServerHandle> {
   const port = opts.port ?? 4319;
   const mcpPort = opts.mcpPort ?? 4321; // serveHttp's default; overridable for tests / a second instance
+  mcpStatus = { live: false, error: 'starting' };
 
   // Connect the brain: an explicit --brain wins and is remembered for next time;
   // otherwise reconnect the last brain we served (persisted config), so a plain
@@ -1752,9 +1779,19 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
   serveHttp({ getBrain: () => brainPath, brain: mcpBrainSource(), port: mcpPort })
     .then((h) => {
       mcpHandle = h;
+      mcpStatus = { live: true };
       console.error(`callosium: MCP endpoint live at http://127.0.0.1:${mcpPort}/mcp (bearer-token auth) — for a public HTTPS URL, front it with a tunnel`);
     })
-    .catch((e) => console.error(`callosium: MCP HTTP endpoint not auto-started (${(e as Error).message}); run 'callosium mcp --http' if you need URL+token clients`));
+    .catch((e) => {
+      // console.error is not a way to tell anyone anything here: the desktop app runs as a
+      // windows_subsystem="windows" process with no console, and over MCP stdio this stream is the
+      // protocol. So the failure was invisible while the Agents screen went on printing this exact
+      // URL and a token for it — the user copies a config for an endpoint that was never listening.
+      // The usual cause is a previous Callosium that outlived its window and still holds the port,
+      // which is worse than it sounds: the agents then talk to THAT instance's brain, not this one.
+      mcpStatus = { live: false, error: (e as Error).message };
+      console.error(`callosium: MCP HTTP endpoint not auto-started (${(e as Error).message}); run 'callosium mcp --http' if you need URL+token clients`);
+    });
 
   // Reject any request that a browser marks as (or reveals via Origin/Referer to
   // be) cross-origin. The dashboard has no auth beyond loopback binding, so

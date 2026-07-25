@@ -341,12 +341,19 @@ pub fn run() {
             let nav_token = token.clone();
             std::thread::spawn(move || {
                 // If the spawn itself failed, skip the ~90s handshake wait and surface the error now.
-                if did_spawn && wait_for_server(port, &nav_token) {
-                    if let Some(w) = nav_handle.get_webview_window("main") {
-                        if let Ok(parsed) = nav_url.parse() {
-                            let _ = w.navigate(parsed);
-                        }
-                    }
+                // navigate() is now the ONLY thing that moves this window off the loading screen —
+                // the page used to also poll and redirect itself, which is exactly the hole that let
+                // an unverified local server take over the window. So its Result can no longer be
+                // discarded: a failed navigate would strand the user on "waking your brain" forever
+                // with the server up and nothing wrong that they could see.
+                let navigated = did_spawn
+                    && wait_for_server(port, &nav_token)
+                    && nav_handle
+                        .get_webview_window("main")
+                        .and_then(|w| nav_url.parse().ok().map(|u| w.navigate(u).is_ok()))
+                        .unwrap_or(false);
+                if navigated {
+                    // window is showing the dashboard — nothing further to do
                 } else if let Some(w) = nav_handle.get_webview_window("main") {
                     // The server never answered the handshake within the window — spawn failed, or it
                     // crashed on boot. Say so instead of leaving the loading screen up forever. (This

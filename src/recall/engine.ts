@@ -1409,7 +1409,25 @@ export async function recall(
     // every file it touches, and any edit to a two-year-old log restamps it) got
     // the full freshness boost and won "what happened recently", burying the note
     // the week actually belonged to.
-    const now = Math.max(...fused.map((f) => recencyMs(f.path)));
+    //
+    // But the reference point must never sit in the FUTURE. Unlike an mtime, a
+    // content date routinely runs ahead of today — launch plans, scheduled
+    // meetings, deadlines — and a plain max() let ONE such note define "now" for
+    // the whole pool. Measured on a 26 Jul vault: with "Launch plan 4 Aug 2026"
+    // in the pool, yesterday's session log was scored 10 days old (x1.83) while
+    // the not-yet-happened plan took the full x2.0; add "Board kickoff 15 Oct
+    // 2026" and EVERY note that has actually happened passed fadeDays (x1.0 —
+    // the re-rank silently off), leaving the far-future meeting as the only
+    // note boosted at all. So anchor on the freshest note that has ACTUALLY
+    // happened, falling back to wall-clock only when the pool holds nothing but
+    // future notes. (Not plain Date.now(): mtimes are never in
+    // the future, so the pre-content-date code always anchored on the pool's
+    // newest note and a vault dormant for six months still got a working
+    // freshness ladder. Anchoring on today would zero that ladder — a new
+    // regression in place of this one.)
+    const wallNow = Date.now();
+    const happened = fused.map((f) => recencyMs(f.path)).filter((ms) => ms <= wallNow);
+    const now = happened.length ? Math.max(...happened) : wallNow;
     const { fadeDays, maxBoost } = RETRIEVAL_SCHEMA.recency;
     // Coverage gate: recency may only re-rank the BEST-matching tier. A recent
     // note that matches FEWER of the query's content words must never leapfrog a
@@ -1431,7 +1449,11 @@ export async function recall(
     fused = fused
       .map((f) => {
         if ((covs.get(f.path) ?? 0) < maxCov - 1e-9) return f; // not a best-tier match — no recency lift
-        const age = (now - recencyMs(f.path)) / 86400000;
+        // Clamped at zero: now that `now` can be older than a note's content
+        // date, a future-dated note would otherwise carry a NEGATIVE age, push
+        // recency above 1 and take a boost past the ≤2x this block promises. A
+        // note about tomorrow is at best as fresh as a note about today.
+        const age = Math.max(0, now - recencyMs(f.path)) / 86400000;
         const recency = Math.max(0, 1 - age / fadeDays);
         return { ...f, rrf: f.rrf * (1 + maxBoost * recency) };
       })

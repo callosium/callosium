@@ -123,24 +123,38 @@ export function generateMap(schema: BrainSchema, texts: VaultTexts): string {
   // navigable knowledge, not plumbing). Keyed by the DEEPEST matching partition
   // — the same longest-prefix rule partitionOf uses everywhere else — not by the
   // first path segment: a schema may declare a MULTI-segment partition
-  // ("Work/Projects"), and keying on seg[0] meant that key never existed, so
-  // `partOrder.filter(byTop.has)` below silently dropped it. The result was a
-  // partition with no section, no job, no layout and no subfolder lines: its
-  // notes were counted under the parent while its entire structure was invisible
-  // to the AI reading the map — the identical top-segment-only bug partitionOf
-  // was fixed for. Folders the schema doesn't know still fall back to seg[0].
+  // ("Work/Projects"), and keying on seg[0] meant that key never existed, so a
+  // `partOrder.filter(byTop.has)` section list silently dropped it. The result
+  // was a partition with no section, no job, no layout and no subfolder lines —
+  // the identical top-segment-only bug partitionOf was fixed for. Folders the
+  // schema doesn't know still fall back to seg[0].
+  //
+  // OWNERSHIP IS NOT THE SAME QUESTION AS "does this partition get a section".
+  // Keying the section list on the owner alone just moved the invisibility from
+  // the child to the PARENT: with a declared "Work/Projects", a vault whose Work
+  // notes all sit under Work/Projects/ owned nothing at "Work", so Work vanished
+  // — its job and its four declared layout lines (Meetings/<Year>/…, People/,
+  // Playbooks/) went with it, and an AI reading the map could no longer learn
+  // where a Work meeting note belongs. So `present` records EVERY declared
+  // partition a visible note lives under — the owner plus all of its ancestors —
+  // and that, not byTop, decides who gets a section. A partition with zero
+  // visible notes still gets none: get_map hands us a scope-filtered file list
+  // (mcp/server.ts), and rendering every declared partition unconditionally
+  // would disclose to a restricted agent that a gated Private/ exists.
   const byTop = new Map<string, string[]>();
+  const present = new Set<string>();
   for (const f of texts.files) {
     if (f.startsWith('System/')) continue;
     const top = partitionOf(schema, f) ?? (f.includes('/') ? f.split('/')[0] : '(root)');
     (byTop.get(top) ?? byTop.set(top, []).get(top)!).push(f);
+    for (const p of partOrder) if (f === p || f.startsWith(p + '/')) present.add(p);
   }
 
   // Partitions first in schema order, then any custom top-level folders the owner
   // added (so a personalized brain still maps fully), then root files.
   const known = new Set(partOrder);
   const tops = [
-    ...partOrder.filter((p) => byTop.has(p)),
+    ...partOrder.filter((p) => present.has(p)),
     ...[...byTop.keys()].filter((t) => !known.has(t) && t !== '(root)').sort(),
     ...(byTop.has('(root)') ? ['(root)'] : []),
   ];
@@ -148,7 +162,9 @@ export function generateMap(schema: BrainSchema, texts: VaultTexts): string {
   const sections: string[] = [];
   const hubs: string[] = [];
   for (const top of tops) {
-    const files = byTop.get(top)!;
+    // May be empty: a parent partition whose notes all live under a DEEPER
+    // declared partition owns none of them directly, yet still needs its section.
+    const files = byTop.get(top) ?? [];
     // How many segments the partition itself occupies. Everything below is
     // measured from HERE, not from seg[0], so a multi-segment partition's own
     // path is never repeated inside its subfolder lines.
@@ -192,8 +208,14 @@ export function generateMap(schema: BrainSchema, texts: VaultTexts): string {
     }
     const job = jobOf.get(top);
     const sub = structOf.get(top);
+    // Declared partitions nested INSIDE this one (visible ones only — see the
+    // scope note above). Their notes are owned by them, so they are absent from
+    // this section's count and its ↳ lines; naming them here is what keeps the
+    // count honest and points the AI at the section that governs that subtree.
+    const nested = partOrder.filter((p) => p !== top && p.startsWith(top + '/') && present.has(p));
     const head = `### ${top}/  —  ${job ?? 'custom folder'}  (${files.length} note${files.length === 1 ? '' : 's'})`;
     const lines = [head];
+    if (nested.length) lines.push(`  contains: ${nested.map((n) => `${n}/`).join(' · ')} — each has its own section here; their notes count there, not in the total above`);
     if (sub?.length) lines.push(`  layout: ${sub.join(' · ')}`);
     if (anchors.length) lines.push(`  anchors: ${anchors.slice(0, 8).map((a) => `[[${a}]]`).join(', ')}${anchors.length > 8 ? ` … (+${anchors.length - 8})` : ''}`);
     // A subfolder earns a line if it holds a HUB (at any depth — a hub is a

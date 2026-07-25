@@ -29,7 +29,7 @@ import { aliasesOf } from '../core/aliases.ts';
 import { pairAgent, loadAgents, updateAgents, rotateAgentToken, renameAgent } from './../mcp/agents.ts';
 import { serveHttp, mcpCacheSource, type BrainSource, type ServerHandle } from './../mcp/server.ts';
 import { liveBanner } from '../util/term.ts';
-import type { GraphIndex } from '../core/types.ts';
+import type { GraphIndex, NotePath } from '../core/types.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const UI_HTML = path.join(HERE, 'ui.html');
@@ -52,9 +52,13 @@ try {
 
 // ── in-memory session state (one brain per running server) ──
 let brainPath: string | null = null;
-// Did the auto-started MCP endpoint actually bind? Module-level because handleState reports it and
-// serveDashboard sets it. The connect guide shows a URL + token for this endpoint, so when it never
-// came up the UI has to say so rather than hand out config for a port nothing is listening on.
+// Did the auto-started MCP endpoint actually bind? Module-level because serveDashboard sets it and
+// both /api/state and /api/overview report it. The connect guide shows a URL + token for this
+// endpoint, so when it never came up the UI has to say so rather than hand out config for a port
+// nothing is listening on. It is NOT brain-scoped: the endpoint is started unconditionally, before
+// and independently of any brain, so both endpoints publish it on their no-brain branch too — the
+// connect screen at the END of onboarding is the FIRST place the URL is handed out, and at that
+// point there may still be no brain (the ingest path renders it without re-fetching /api/overview).
 let mcpStatus: { live: boolean; error?: string } = { live: false, error: 'not started' };
 
 // Persist the connected brain (best-effort, atomic temp+rename) so a restart
@@ -801,7 +805,9 @@ async function handleRename(res: http.ServerResponse, body: Json) {
 }
 
 async function handleState(res: http.ServerResponse) {
-  if (!brainPath) return send(res, 200, { onboarded: false });
+  // mcp rides the no-brain branch too — see the mcpStatus declaration. The desktop shell polls this
+  // during onboarding, when there is no brain yet and the endpoint's health is still worth knowing.
+  if (!brainPath) return send(res, 200, { onboarded: false, mcp: mcpStatus });
   const vault = Vault.open(brainPath);
   const { schema } = await loadSchema(vault);
   const reg = await loadAgents(vault).catch(() => ({ agents: [] as { id: string; displayName: string }[] }));
@@ -827,7 +833,12 @@ async function handleState(res: http.ServerResponse) {
 
 // ── OVERVIEW: the cockpit vitals ──
 async function handleOverview(res: http.ServerResponse) {
-  if (!brainPath) return send(res, 200, { onboarded: false });
+  // mcp BEFORE onboarding, not only after it. Onboarding's connect screen prints the MCP URL +
+  // token and is reached with no brain connected and (on the "point me at my notes" path) with no
+  // second /api/overview call — boot()'s single fetch is the only one the client ever makes. Leaving
+  // `mcp` off this branch left state.mcp null there, so the "nothing is listening on that port"
+  // warning could never fire in the one place it matters most: the first time the URL is copied.
+  if (!brainPath) return send(res, 200, { onboarded: false, mcp: mcpStatus });
   const vault = Vault.open(brainPath);
   const { schema } = await loadSchema(vault);
   const { texts, graph, emb } = await loadAll();
@@ -854,9 +865,10 @@ async function handleOverview(res: http.ServerResponse) {
     lastEditedMs: maxMtime(texts.mtimes),
     partitions,
     agents: reg.agents.map((a) => ({ id: a.id, displayName: a.displayName })),
-    // Rides on overview because that is what the UI actually polls (/api/state is the desktop
-    // shell's handshake, not a screen's data source). The connect guide needs it: it prints a URL
-    // and a token for this endpoint, and must not do that when nothing is listening.
+    // Overview is what the UI actually polls, so this is the copy the screens read (/api/state
+    // carries it too, but that is the desktop shell's handshake, not a screen's data source). The
+    // connect guide needs it: it prints a URL and a token for this endpoint, and must not do that
+    // when nothing is listening. Same field on the no-brain branch above — see that comment.
     mcp: mcpStatus,
   });
 }
@@ -1325,9 +1337,20 @@ async function handleSuggestions(res: http.ServerResponse) {
 // (else both read the same baseHash, both pass the CAS, and the second clobbers
 // the first). A module-level chain keyed by canonical path does that; a racing
 // MCP/external writer is caught by the CAS itself (baseHash mismatch → 409).
+//
+// The key MUST be the same one vault.withLock derives, which is why it comes from Vault#lockKeyFor
+// rather than being computed here. This was a private copy — `linux ? rel : rel.toLowerCase()` over
+// the RAW relative path — and it was the third such copy in the codebase. It folded neither
+// separators ('Knowledge/x.md' vs 'Knowledge\\x.md') nor Unicode form (NFC vs NFD, which is exactly
+// what an iCloud or Dropbox listing hands back) nor Windows trailing dots/spaces. Two saves of the
+// same note under different spellings therefore took DIFFERENT chains, both read the same baseHash,
+// both passed the compare-and-swap, and the second silently overwrote the first — the precise lost
+// update the comment above says this chain exists to prevent.
 const noteSaveChains = new Map<string, Promise<unknown>>();
 async function withNoteSaveLock<T>(rel: string, fn: () => Promise<T>): Promise<T> {
-  const key = process.platform === 'linux' ? rel : rel.toLowerCase();
+  // lockKeyFor is instance-level because the key carries the vault root; brainPath is set whenever
+  // a save can happen, and the fallback only has to be stable, not canonical.
+  const key = brainPath ? Vault.open(brainPath).lockKeyFor(rel as NotePath) : rel.toLowerCase();
   const prev = noteSaveChains.get(key) ?? Promise.resolve();
   let result: T;
   const run = prev.catch(() => {}).then(async () => { result = await fn(); });

@@ -41,7 +41,9 @@ const vaultLocks = new Map<string, Promise<void>>();
  *  we fold the same way the scope check does. normalizeRel can't just be called
  *  here: it hard-denies ABSOLUTE paths, and this key must carry the vault root so
  *  two brains never collide in the module-level map. Linux is left byte-exact —
- *  there NFC/NFD and "Log.md " really are different files. */
+ *  there NFC/NFD and "Log.md " really are different files.
+ *  This is the ONLY place the fold is written. Callers outside this file reach it
+ *  through Vault#lockKeyFor — see the note there for why a private copy is a bug. */
 function lockKey(canonAbs: string): string {
   if (process.platform === 'linux') return canonAbs;
   return canonAbs
@@ -115,13 +117,19 @@ export class Vault {
     }
   }
 
-  /** Serialize read-modify-write sequences on the SAME note path within this
-   *  process, so two in-process writers (an agent pipelining two append_note
-   *  calls, or a dashboard reindex racing an agent write) can't both read the
-   *  same content and clobber each other's change. Cross-process writers remain
-   *  best-effort — the atomic rename in writeFile keeps each individual write
-   *  from tearing. */
-  async withLock<T>(rel: NotePath, fn: () => Promise<T>): Promise<T> {
+  /** The exact string withLock() mutexes on for `rel` — the answer to "are these two
+   *  spellings the same note as far as the write lock is concerned?".
+   *
+   *  Exposed because other layers MUST agree with the write lock about that, and a
+   *  private copy of the derivation silently drifts the moment the fold changes.
+   *  It did: when lockKey() gained NFC + trailing dot/space folding, mcp/server.ts
+   *  still carried two hand-copied `linux ? k : k.toLowerCase()` clones — one in
+   *  move_note's same-file guard, one in the version-snapshot barrier's key. The
+   *  guard then passed for a from/to pair that vault.ts folds to ONE key, so
+   *  move_note locked lo then hi on the identical key and self-deadlocked, poisoning
+   *  that note's lock for the life of the process; the barrier missed exactly the
+   *  aliases the lock serializes. Anything that needs this key calls THIS. */
+  lockKeyFor(rel: NotePath): string {
     // Key on the canonical absolute path, not the raw caller string — otherwise
     // 'Knowledge/x.md' and 'Knowledge\\x.md' (same file on win32) get different
     // lock keys and both writers run in parallel, clobbering each other.
@@ -129,9 +137,22 @@ export class Vault {
     try {
       canon = this.abs(rel);
     } catch {
-      canon = rel;
+      canon = rel; // escapes the root: the I/O will refuse it, but still lock on something stable
     }
-    const key = lockKey(canon);
+    return lockKey(canon);
+  }
+
+  /** Serialize read-modify-write sequences on the SAME note path within this
+   *  process, so two in-process writers (an agent pipelining two append_note
+   *  calls, or a dashboard reindex racing an agent write) can't both read the
+   *  same content and clobber each other's change. Cross-process writers remain
+   *  best-effort — the atomic rename in writeFile keeps each individual write
+   *  from tearing.
+   *  NOT re-entrant: nesting two withLocks that resolve to ONE key deadlocks
+   *  forever. A caller that locks two paths must first prove they are distinct
+   *  with lockKeyFor(). */
+  async withLock<T>(rel: NotePath, fn: () => Promise<T>): Promise<T> {
+    const key = this.lockKeyFor(rel);
     const prev = vaultLocks.get(key) ?? Promise.resolve();
     let release!: () => void;
     const chained = prev.then(() => new Promise<void>((r) => (release = r)));

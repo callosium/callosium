@@ -553,7 +553,19 @@ function ob_ingestStream(){
   // first run only: the ~120MB language model downloads once — show it as a
   // download, not a mysterious hang at 70%.
   es.addEventListener('model', e=>{ bump(); try{ const d=JSON.parse(e.data); state.ob_ingest.label = d.label || ''; renderOnboard(state.onboardPhase); }catch(_){} });
-  es.addEventListener('done', ()=>{ ob_ingestCleanup(); state.ob_ingest.pct=100; renderOnboard(state.onboardPhase); state.ob_setupMode='existing'; state.ob_enterTimer = setTimeout(()=>{ state.ob_enterTimer=null; ob_nav('connect'); }, 700); });
+  // Refresh the overview BEFORE the connect guide paints. state.mcp — whether the local MCP
+  // endpoint actually bound — only ever arrives from /api/overview, and on this path boot()'s one
+  // call happened while there was still no brain, so it is null. The guide's "this URL will not
+  // answer" warning is gated on it, so without this the very user it was written for (first run,
+  // a zombie Callosium still holding the port) copies a URL for a dead port with no warning. The
+  // create-a-brain path already refreshes here — see ob_doInit.
+  es.addEventListener('done', ()=>{ ob_ingestCleanup(); state.ob_ingest.pct=100; renderOnboard(state.onboardPhase); state.ob_setupMode='existing';
+    state.ob_enterTimer = setTimeout(async ()=>{ state.ob_enterTimer=null;
+      const view = state.ob_view;
+      try{ await loadOverview(); }catch(_){}
+      if(state.ob_view !== view) return;       // user cancelled / navigated while it was loading
+      ob_nav('connect');
+    }, 700); });
   es.addEventListener('error', ()=>{ ob_ingestCleanup(); state.ob_err='ingest didn’t finish — try again.'; state.ob_view='existing'; renderOnboard(state.onboardPhase); });
 }
 // Guest = fully local, no hosted account (just a local record so the shell has a name).

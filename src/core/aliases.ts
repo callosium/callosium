@@ -11,7 +11,17 @@
 // glossary and the auto-link writer, so a phantom alias becomes a wrong-note
 // answer and, via connect-orphans, a wrong `[[link|text]]` written into the
 // owner's file.
-const ALIAS_FLOW_OPEN_RE = /^aliases:[ \t]*\[/m;
+// The `[` may sit on the line BELOW the key — `aliases:\n  [Bobby, Bob S]` is
+// ordinary YAML and gray-matter reads it as a two-item list. An earlier revision
+// tightened `\s*` to `[ \t]*` (to stop the key swallowing a following block
+// sequence) and lost that spelling: it matched neither the flow nor the block
+// pattern, so the note came back alias-less while the graph still knew the names.
+// One optional indented line break is allowed back, and only that: the indent is
+// required (YAML demands the continuation be indented past the key), so a
+// following top-level key's own flow list — `aliases:\ntags: [a, b]` — still
+// cannot be mistaken for this one, and `^` at column 0 keeps a nested `aliases:`
+// out.
+const ALIAS_FLOW_OPEN_RE = /^aliases:[ \t]*(?:\r?\n[ \t]+)?\[/m;
 // `[ \t]*\n` demanded a BARE LF right after the key, so every Windows-authored
 // note (`aliases:\r\n  - Bobby`) fell through to `return []` — gray-matter, which
 // feeds the graph's name map, read the same note as ["Bobby","Bob S"]. The split
@@ -42,7 +52,16 @@ const unquote = (s: string): string => {
  *  refused a legitimate new "Smith" note as "already exists as People/John
  *  Smith.md", an identity it had never verified. Real vaults already contain this
  *  input. Scanning also ends the list at its true `]` rather than the first one,
- *  so an alias containing `]` is no longer truncated. */
+ *  so a QUOTED alias containing `]` is no longer truncated.
+ *
+ *  A quote only OPENS a scalar when it is the first non-space character of the
+ *  item, because that is the only place YAML lets one quote: everywhere else `'`
+ *  and `"` are literal text. Treating every quote as a delimiter made ordinary
+ *  vault content unreadable — `[O'Brien, Doc]` ran off the end of the list and
+ *  dropped BOTH aliases, and an even count of apostrophes was worse
+ *  (`[Dad's Clinic, Mum's Clinic]` fused into one phantom alias). Apostrophes are
+ *  normal in People/ names (O'Brien, Dad's Clinic, Q1'26), and `5" pipe` is the
+ *  same bug with the other quote. */
 function splitFlow(fm: string, i: number): string[] | null {
   const items: string[] = [];
   let cur = '';
@@ -62,7 +81,9 @@ function splitFlow(fm: string, i: number): string[] | null {
       cur += c;
       continue;
     }
-    if (c === '"' || c === "'") {
+    // `cur.trim() === ''` is the "nothing but leading whitespace so far" test —
+    // whitespace includes the newlines a flow list may legally contain.
+    if ((c === '"' || c === "'") && cur.trim() === '') {
       quote = c;
       cur += c;
       continue;

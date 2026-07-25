@@ -1213,25 +1213,57 @@ function startWeb(){
 // and the first one to finish must not clear the cursor while the other runs.
 let __busyN = 0;
 function busyCursor(on){ __busyN = Math.max(0, __busyN + (on ? 1 : -1)); document.body.classList.toggle('is-busy', __busyN > 0); }
+// #reindexBtn lives in the persistent top bar: it is never re-rendered and its onclick is bound
+// once at boot, so anything written here stays on screen for the rest of the session. A transient
+// message therefore has to clear itself.
+let __reindexHintTimer = null;
+function reindexIdle(btn){ if(!btn) return; btn.textContent='re-index'; btn.title=''; }
+function reindexHint(btn, label, title){
+  if(!btn) return;
+  clearTimeout(__reindexHintTimer);
+  btn.textContent = label; btn.title = title || '';
+  __reindexHintTimer = setTimeout(()=>{ __reindexHintTimer=null; if(!state.reindexing) reindexIdle(btn); }, 6000);
+}
 function reindex(){
+  const btn=$('#reindexBtn');
   if(state.reindexing) return;
+  // st_reindexing is the SAME rebuild, started from Settings. Opening a second stream only trips
+  // the server's single-ingest guard (server.ts:676) and the reply used to be painted as a failure
+  // of the run that is, at that moment, working perfectly. Don't start it; say what's happening.
+  if(state.st_reindexing){
+    reindexHint(btn, 'already re-indexing…', 'A re-index started in Settings is still running. Your brain is being rebuilt — this button frees up when it finishes.');
+    announce('a re-index is already running');
+    return;
+  }
+  clearTimeout(__reindexHintTimer); __reindexHintTimer=null;
   state.reindexing=true; busyCursor(true);
-  const btn=$('#reindexBtn'); btn.textContent='re-indexing…'; btn.style.color='var(--danger)'; btn.style.borderColor='var(--danger)';
+  btn.textContent='re-indexing…'; btn.title=''; btn.style.color='var(--danger)'; btn.style.borderColor='var(--danger)';
   announce('re-indexing your brain');
   const es=new EventSource(CCT_Q('/api/ingest'));
   // A failed re-index must LOOK failed. This used to drop straight back to the idle 're-index'
   // label, which is the same thing a success leaves behind — so a stream that died mid-way was
   // indistinguishable from one that finished, and the user carried on believing their brain had
   // been rebuilt. The button holds a visible failed state until the next attempt.
-  const done=async(reload)=>{ es.close(); state.reindexing=false; busyCursor(false);
-    btn.textContent = reload ? 're-index' : 're-index failed — retry';
+  //
+  // But only for a REAL failure. The stream reports two different things through the same 'error'
+  // event: a transport drop (no payload) and a server-sent `event: error` whose data carries the
+  // reason — and the single-ingest guard's reason means another run is rebuilding the brain right
+  // now and will finish. Claiming "your brain was not rebuilt" there is false, and on this button
+  // it is false forever. Read the payload, the way render-settings.js does for the same event.
+  const done=async(reload,msg)=>{ es.close(); state.reindexing=false; busyCursor(false);
     btn.style.color='var(--danger)'; btn.style.borderColor='var(--danger)';
-    btn.title = reload ? '' : 'The re-index stopped before it finished. Your brain was not fully rebuilt — click to try again.';
-    announce(reload ? 'index updated' : 're-index failed — your brain was not rebuilt');
+    const busy = !reload && /already running/i.test(String(msg||''));
+    if(reload){ reindexIdle(btn); }
+    else if(busy){ reindexHint(btn, 'already re-indexing…', String(msg)); }
+    else {
+      btn.textContent = 're-index failed — retry';
+      btn.title = (msg ? String(msg)+' ' : '') + 'The re-index stopped before it finished. Your brain was not fully rebuilt — click to try again.';
+    }
+    announce(reload ? 'index updated' : busy ? String(msg) : (msg ? String(msg)+' ' : '')+'re-index failed — your brain was not rebuilt');
     if(reload){ await loadOverview(); await loadActivity(); if(state.screen==='overview') render(); } };
   es.addEventListener('phase',e=>{ try{ const d=JSON.parse(e.data); btn.textContent=d.label+'…'; announce(d.label); }catch(_){} });
   es.addEventListener('done',()=>done(true));
-  es.addEventListener('error',()=>done(false));
+  es.addEventListener('error',e=>{ let msg=null; try{ const d=JSON.parse(e&&e.data); if(d&&d.message) msg=String(d.message); }catch(_){} done(false,msg); });
 }
 
 // ── theme + clock ──
@@ -2033,6 +2065,14 @@ function notesRenderMarkdown(body){
       if(end === -1) return;                       // still wholly inside the comment
       ln = ln.slice(end+3); inComment = false; hadComment = true;
     }
+    // Pull inline code spans out FIRST: `<!-- todo -->` inside backticks is documented syntax the
+    // reader must SEE, not a comment to hide. Stripping before this deleted it — and worse, left
+    // the remaining backticks unbalanced, so every later span on the line paired up wrongly.
+    // (Fenced blocks already returned above; this is the inline case.) Same placeholder trick as
+    // notesInline: a NUL sentinel is not something a markdown note carries, and every token is
+    // restored below — before esc() and before any block-level match — so nothing else sees them.
+    const codeSpans = [];
+    ln = ln.replace(/`[^`]+`/g, m => { codeSpans.push(m); return '\u0000C'+(codeSpans.length-1)+'\u0000'; });
     for(;;){
       const st = ln.indexOf('<!--');
       if(st === -1) break;
@@ -2043,6 +2083,8 @@ function notesRenderMarkdown(body){
       if(en === -1){ ln = ln.slice(0,st); inComment = true; break; }
       ln = ln.slice(0,st) + ln.slice(en+3);
     }
+    // restore verbatim — a span that sat INSIDE a comment was removed with it and stays hidden.
+    if(codeSpans.length) ln = ln.replace(/\u0000C(\d+)\u0000/g, (m,i)=> codeSpans[+i]);
     if(hadComment && !ln.trim()) return;           // the line held nothing but the comment
     if(ln.trim()===''){ out += '<div style="height:8px"></div>'; return; }
     const e = esc(ln);
@@ -2138,7 +2180,12 @@ async function notesSave(){
       notesRenderAll();
     }
   }
-  finally{ state.notes_saving = false; }
+  finally{
+    state.notes_saving = false;
+    // A deep link that arrived mid-save was HELD, not dropped (see renderNotes) — the save owned
+    // notes_content until now. Honour it the moment the lock is gone.
+    if(state.notes_open && state.screen==='notes'){ try{ const p = renderNotes(); if(p && p.catch) p.catch(()=>{}); }catch(e){} }
+  }
 }
 function notesStartEdit(){
   // CRITICAL: never enter edit mode before the body has loaded — editing null
@@ -2526,22 +2573,30 @@ async function renderNotes(){
   }
   // deep-link: another screen (Brain Map / Ask source chip) asked to open a note
   if(state.notes_open){
-    const target = state.notes_open; state.notes_open = null;
-    // Open the requested note directly — don't require it to be in the loaded list
-    // (a deep-linked note can be beyond the 5000-item cap); notesLoadNote fetches
-    // it by path and surfaces its own error if it truly can't be read.
-    //
-    // But ask first, exactly as a tree click does. Leaving Notes mid-edit keeps
-    // notes_editing set, so coming back via an Ask source chip / Brain Map node /
-    // Health jump ran notesLoadNote straight away — it clears notes_editing and
-    // replaces the content, so the half-written draft was silently unreachable.
-    // Same guard as notesWireTree, for the same reason, in the one other place a
-    // note switch is initiated. A save in flight owns notes_content until it
-    // resolves, so a deep link waits rather than racing it.
-    const mayOpen = target && target !== state.notes_selected && !state.notes_saving
-      && (!state.notes_editing || confirm(t('Discard your unsaved changes to this note?','هل تريد تجاهل تغييراتك غير المحفوظة؟')));
-    if(mayOpen) await notesLoadNote(target);
-    else if(state.notes_flash === target) state.notes_flash = null; // don't flash a note we didn't open
+    const target = state.notes_open;
+    // A save in flight owns state.notes_content until it resolves, so the deep link WAITS — it is
+    // held in state.notes_open (not cleared) and notesSave's finally re-enters renderNotes the
+    // moment the save lands. Clearing it here instead dropped the note the user asked for on the
+    // floor: no open, no message, nothing to retry.
+    if(state.notes_saving && target !== state.notes_selected){
+      // held — fall through and paint the note that is still being saved
+    } else {
+      state.notes_open = null;
+      // Open the requested note directly — don't require it to be in the loaded list
+      // (a deep-linked note can be beyond the 5000-item cap); notesLoadNote fetches
+      // it by path and surfaces its own error if it truly can't be read.
+      //
+      // But ask first, exactly as a tree click does. Leaving Notes mid-edit keeps
+      // notes_editing set, so coming back via an Ask source chip / Brain Map node /
+      // Health jump ran notesLoadNote straight away — it clears notes_editing and
+      // replaces the content, so the half-written draft was silently unreachable.
+      // Same guard as notesWireTree, for the same reason, in the one other place a
+      // note switch is initiated.
+      const mayOpen = target !== state.notes_selected
+        && (!state.notes_editing || confirm(t('Discard your unsaved changes to this note?','هل تريد تجاهل تغييراتك غير المحفوظة؟')));
+      if(mayOpen) await notesLoadNote(target);
+      else if(target !== state.notes_selected && state.notes_flash === target) state.notes_flash = null; // declined — don't flash a note we didn't open
+    }
   }
   if(state.notes_listError && !(state.notes_items||[]).length){
     scr.innerHTML = '<div style="margin-bottom:20px;animation:rise .4s ease both"><h1 style="font-family:var(--pixel);font-weight:700;font-size:42px;line-height:1.02">notes.</h1>'
@@ -6161,7 +6216,19 @@ function ob_ingestStream(){
   // first run only: the ~120MB language model downloads once — show it as a
   // download, not a mysterious hang at 70%.
   es.addEventListener('model', e=>{ bump(); try{ const d=JSON.parse(e.data); state.ob_ingest.label = d.label || ''; renderOnboard(state.onboardPhase); }catch(_){} });
-  es.addEventListener('done', ()=>{ ob_ingestCleanup(); state.ob_ingest.pct=100; renderOnboard(state.onboardPhase); state.ob_setupMode='existing'; state.ob_enterTimer = setTimeout(()=>{ state.ob_enterTimer=null; ob_nav('connect'); }, 700); });
+  // Refresh the overview BEFORE the connect guide paints. state.mcp — whether the local MCP
+  // endpoint actually bound — only ever arrives from /api/overview, and on this path boot()'s one
+  // call happened while there was still no brain, so it is null. The guide's "this URL will not
+  // answer" warning is gated on it, so without this the very user it was written for (first run,
+  // a zombie Callosium still holding the port) copies a URL for a dead port with no warning. The
+  // create-a-brain path already refreshes here — see ob_doInit.
+  es.addEventListener('done', ()=>{ ob_ingestCleanup(); state.ob_ingest.pct=100; renderOnboard(state.onboardPhase); state.ob_setupMode='existing';
+    state.ob_enterTimer = setTimeout(async ()=>{ state.ob_enterTimer=null;
+      const view = state.ob_view;
+      try{ await loadOverview(); }catch(_){}
+      if(state.ob_view !== view) return;       // user cancelled / navigated while it was loading
+      ob_nav('connect');
+    }, 700); });
   es.addEventListener('error', ()=>{ ob_ingestCleanup(); state.ob_err='ingest didn’t finish — try again.'; state.ob_view='existing'; renderOnboard(state.onboardPhase); });
 }
 // Guest = fully local, no hosted account (just a local record so the shell has a name).

@@ -86,6 +86,14 @@ function notesRenderMarkdown(body){
       if(end === -1) return;                       // still wholly inside the comment
       ln = ln.slice(end+3); inComment = false; hadComment = true;
     }
+    // Pull inline code spans out FIRST: `<!-- todo -->` inside backticks is documented syntax the
+    // reader must SEE, not a comment to hide. Stripping before this deleted it — and worse, left
+    // the remaining backticks unbalanced, so every later span on the line paired up wrongly.
+    // (Fenced blocks already returned above; this is the inline case.) Same placeholder trick as
+    // notesInline: a NUL sentinel is not something a markdown note carries, and every token is
+    // restored below — before esc() and before any block-level match — so nothing else sees them.
+    const codeSpans = [];
+    ln = ln.replace(/`[^`]+`/g, m => { codeSpans.push(m); return '\u0000C'+(codeSpans.length-1)+'\u0000'; });
     for(;;){
       const st = ln.indexOf('<!--');
       if(st === -1) break;
@@ -96,6 +104,8 @@ function notesRenderMarkdown(body){
       if(en === -1){ ln = ln.slice(0,st); inComment = true; break; }
       ln = ln.slice(0,st) + ln.slice(en+3);
     }
+    // restore verbatim — a span that sat INSIDE a comment was removed with it and stays hidden.
+    if(codeSpans.length) ln = ln.replace(/\u0000C(\d+)\u0000/g, (m,i)=> codeSpans[+i]);
     if(hadComment && !ln.trim()) return;           // the line held nothing but the comment
     if(ln.trim()===''){ out += '<div style="height:8px"></div>'; return; }
     const e = esc(ln);
@@ -191,7 +201,12 @@ async function notesSave(){
       notesRenderAll();
     }
   }
-  finally{ state.notes_saving = false; }
+  finally{
+    state.notes_saving = false;
+    // A deep link that arrived mid-save was HELD, not dropped (see renderNotes) — the save owned
+    // notes_content until now. Honour it the moment the lock is gone.
+    if(state.notes_open && state.screen==='notes'){ try{ const p = renderNotes(); if(p && p.catch) p.catch(()=>{}); }catch(e){} }
+  }
 }
 function notesStartEdit(){
   // CRITICAL: never enter edit mode before the body has loaded — editing null
@@ -579,22 +594,30 @@ async function renderNotes(){
   }
   // deep-link: another screen (Brain Map / Ask source chip) asked to open a note
   if(state.notes_open){
-    const target = state.notes_open; state.notes_open = null;
-    // Open the requested note directly — don't require it to be in the loaded list
-    // (a deep-linked note can be beyond the 5000-item cap); notesLoadNote fetches
-    // it by path and surfaces its own error if it truly can't be read.
-    //
-    // But ask first, exactly as a tree click does. Leaving Notes mid-edit keeps
-    // notes_editing set, so coming back via an Ask source chip / Brain Map node /
-    // Health jump ran notesLoadNote straight away — it clears notes_editing and
-    // replaces the content, so the half-written draft was silently unreachable.
-    // Same guard as notesWireTree, for the same reason, in the one other place a
-    // note switch is initiated. A save in flight owns notes_content until it
-    // resolves, so a deep link waits rather than racing it.
-    const mayOpen = target && target !== state.notes_selected && !state.notes_saving
-      && (!state.notes_editing || confirm(t('Discard your unsaved changes to this note?','هل تريد تجاهل تغييراتك غير المحفوظة؟')));
-    if(mayOpen) await notesLoadNote(target);
-    else if(state.notes_flash === target) state.notes_flash = null; // don't flash a note we didn't open
+    const target = state.notes_open;
+    // A save in flight owns state.notes_content until it resolves, so the deep link WAITS — it is
+    // held in state.notes_open (not cleared) and notesSave's finally re-enters renderNotes the
+    // moment the save lands. Clearing it here instead dropped the note the user asked for on the
+    // floor: no open, no message, nothing to retry.
+    if(state.notes_saving && target !== state.notes_selected){
+      // held — fall through and paint the note that is still being saved
+    } else {
+      state.notes_open = null;
+      // Open the requested note directly — don't require it to be in the loaded list
+      // (a deep-linked note can be beyond the 5000-item cap); notesLoadNote fetches
+      // it by path and surfaces its own error if it truly can't be read.
+      //
+      // But ask first, exactly as a tree click does. Leaving Notes mid-edit keeps
+      // notes_editing set, so coming back via an Ask source chip / Brain Map node /
+      // Health jump ran notesLoadNote straight away — it clears notes_editing and
+      // replaces the content, so the half-written draft was silently unreachable.
+      // Same guard as notesWireTree, for the same reason, in the one other place a
+      // note switch is initiated.
+      const mayOpen = target !== state.notes_selected
+        && (!state.notes_editing || confirm(t('Discard your unsaved changes to this note?','هل تريد تجاهل تغييراتك غير المحفوظة؟')));
+      if(mayOpen) await notesLoadNote(target);
+      else if(target !== state.notes_selected && state.notes_flash === target) state.notes_flash = null; // declined — don't flash a note we didn't open
+    }
   }
   if(state.notes_listError && !(state.notes_items||[]).length){
     scr.innerHTML = '<div style="margin-bottom:20px;animation:rise .4s ease both"><h1 style="font-family:var(--pixel);font-weight:700;font-size:42px;line-height:1.02">notes.</h1>'

@@ -177,18 +177,15 @@ export async function brainCheck(vault: Vault, shared?: { texts?: VaultTexts; bu
   //    "two notes fight over a name", so they aren't a real clash. Skip them.
   const STRUCTURAL = new Set(['readme', 'index', 'skill', 'sources', 'guide', 'home', 'moc', 'overview', 'notes', '_index', 'about', 'readme.md']);
   // Same-name-different-folder is INTENTIONAL structure, not a clash, when the
-  // colliding notes are: per-client data dumps under /Raw/ (booking.md,
-  // google_maps.md …); a recurring dated series under /Meetings/ (a bi-weekly
-  // that files one note per date); or a sync-conflict/quarantine copy (already
-  // surfaced as sync-conflict-copy). A real clash is two DISTINCT notes fighting
-  // over the same name/alias — those we keep flagging.
+  // notes left after stripping copies are: per-client data dumps under /Raw/
+  // (booking.md, google_maps.md …), or a recurring dated series under /Meetings/
+  // (a bi-weekly that files one note per date). A real clash is two DISTINCT
+  // notes fighting over the same name/alias — those we keep flagging.
   const inRaw = (p: string) => /(^|\/)Raw\//i.test(p);
   const inMeetings = (p: string) => /(^|\/)Meetings\//i.test(p);
   const isConflictCopy = (p: string) => /(^|\/)Quarantine\b/i.test(p) || /-[^/]*(?:macbook|imac|desktop|laptop|['’]s )/i.test(p.split('/').pop() || '');
   for (const c of collisions) {
     if (STRUCTURAL.has(c.name)) continue;
-    if (c.paths.every(inRaw)) continue;
-    if (c.paths.every(inMeetings)) continue;
     // Drop the conflict/quarantine COPIES from the collision, not the collision itself.
     // This used to be `.some(isConflictCopy)`, which threw the whole finding away: a
     // genuine Work/Acme.md vs Personal/Acme.md duplicate — the kind recall silently
@@ -197,10 +194,19 @@ export async function brainCheck(vault: Vault, shared?: { texts?: VaultTexts; bu
     // (sync-conflict-copy only fires for a device-suffixed name whose exact original sits
     // in the SAME folder), so the report asserted no clash where there were two. A clash
     // is still only a clash between two DISTINCT real notes, so a lone note shadowed by
-    // its own quarantine copy stays suppressed exactly as before — the same reason the
-    // two guards above use .every().
+    // its own quarantine copy stays suppressed exactly as before.
+    //
+    // STRIP FIRST, THEN JUDGE. Every guard below has to see the same list the finding
+    // is built from: while the /Raw/ and /Meetings/ carve-outs tested c.paths, one
+    // unrelated Quarantine/booking.md made `.every()` false and re-enabled the exact
+    // per-client-Raw false positive those carve-outs exist to suppress — a warn-severity
+    // card, counted in the dashboard's INTEGRITY_KINDS, for structure the comment above
+    // calls intentional. A path the finding doesn't mention must not decide whether the
+    // finding is emitted.
     const real = c.paths.filter((p) => !isConflictCopy(p));
     if (real.length < 2) continue;
+    if (real.every(inRaw)) continue;
+    if (real.every(inMeetings)) continue;
     findings.push({
       kind: 'duplicate-alias',
       path: real[0],

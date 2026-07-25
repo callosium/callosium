@@ -26,6 +26,7 @@ import git from 'isomorphic-git';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { randomBytes } from 'node:crypto';
 
 export interface Version {
   oid: string; // commit id
@@ -64,12 +65,22 @@ const SKIP_DIRS = new Set(['.git', '.obsidian', '.trash', 'node_modules', '.call
 // exists to keep; and running the pass often makes it the dominant cost of writing a note (at one
 // pass per 100 commits it was ~75% of write throughput). Hence: keep a lot, prune rarely.
 const KEEP_VERSIONS = Math.max(50, Number(process.env.CALLOSIUM_HISTORY_KEEP) || 20_000);
-// Retention runs at BOOT (see ensureHistory) — that is the pass that actually keeps the store
-// bounded across the life of an install, and it is free because nothing is saving notes yet.
-// The write path only needs a backstop for a session that never restarts, so its threshold is set
-// high enough that a normal user never reaches it in one run: at 918 bytes a version, a session that
-// drifts this far over has still only added ~18MB. A note save must never wait on this.
+// Retention is triggered at boot and, as a backstop for a session that never restarts, every
+// PRUNE_EVERY_COMMITS commits. Neither trigger is allowed to sit in a note save's latency: both run
+// DETACHED and the pass aborts the moment a real write queues (see scheduleRetention / trackWrite).
+//
+// That took two goes to get right, which is worth recording. The first attempt moved the pass off
+// the write path and asserted "a note save must never wait on this" — but the pass still entered the
+// same per-brain lock queue that snapshotNote uses, so a save issued during it simply queued behind.
+// Measured on a 1,500-version store pruning to 1,000: a save taken 50ms after boot cost 1,930ms,
+// linear in KEEP_VERSIONS. Off the write path is NOT the same as out of the way.
 const PRUNE_EVERY_COMMITS = 20_000;
+// Don't re-sweep for a handful of commits. The trigger used to be "over the cap at all", so a store
+// one commit over paid the whole O(KEEP) sweep again on every boot; this amortises it over a tenth
+// of the budget. Proportional rather than a flat number so an owner who sets CALLOSIUM_HISTORY_KEEP
+// small still gets pruned promptly — a flat 2,000 would mean a KEEP of 500 never trimmed until the
+// store was five times its budget.
+const PRUNE_SLACK = Math.max(100, Math.floor(KEEP_VERSIONS / 10));
 // Cap on what one timeline request walks/returns. A History panel past a few hundred entries is
 // unusable anyway, and the cap keeps the response bounded no matter how hot the note is.
 const MAX_VERSIONS_LISTED = 500;
@@ -96,6 +107,24 @@ function withRepoLock<T>(brainId: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+// How many real WRITES are queued or running for a brain. Retention watches this: it is the only
+// op here that is both slow and entirely deferrable, so it must never be the thing a note save is
+// stuck behind. Moving the prune off the write path was not enough on its own — it still enters the
+// same per-brain queue, so a save issued while a prune holds the lock waits for the whole pass.
+// Measured: a 1,500-version store pruning to 1,000 made a save taken 50ms later cost 1,930ms, and
+// the cost is linear in KEEP_VERSIONS.
+const pendingWrites = new Map<string, number>();
+function trackWrite<T>(brainId: string, fn: () => Promise<T>): Promise<T> {
+  pendingWrites.set(brainId, (pendingWrites.get(brainId) ?? 0) + 1);
+  return withWriteLock(brainId, fn).finally(() => {
+    const n = (pendingWrites.get(brainId) ?? 1) - 1;
+    if (n > 0) pendingWrites.set(brainId, n);
+    else pendingWrites.delete(brainId);
+  });
+}
+/** True when a real write is waiting — retention checks this and gets out of the way. */
+const writersWaiting = (brainId: string): boolean => (pendingWrites.get(brainId) ?? 0) > 0;
+
 // Cross-PROCESS lock: the dashboard and each MCP agent are separate processes that can all
 // commit to the same shadow repo; isomorphic-git shares one on-disk index/refs, so concurrent
 // commits from two processes could corrupt it. An O_EXCL lockfile serializes them. Best-effort:
@@ -107,7 +136,12 @@ function withRepoLock<T>(brainId: string, fn: () => Promise<T>): Promise<T> {
 const LOCK_HEARTBEAT_MS = 5_000;
 const LOCK_STALE_MS = 60_000; // 12 missed beats: a working holder is never at risk, even mid-import
 const LOCK_ABANDONED_MS = 600_000; // wall-clock fallback where no heartbeat can be read
-const LOCK_FORMAT = 'hb1'; // 3rd line: marks a lockfile whose owner heartbeats (older builds wrote 2)
+const LOCK_FORMAT = 'hb2'; // 4th line carries a beat COUNTER — see why mtime was not enough below
+
+// What we last saw in a lockfile we could not take, and when we saw it (our own clock).
+// The staleness test needs two observations, so it cannot live inside one acquire attempt.
+const lockObservations = new Map<string, { beat: string; firstSeenAt: number }>();
+
 async function acquireProcessLock(brainId: string): Promise<(() => Promise<void>) | null> {
   const lockPath = `${gitdirFor(brainId)}.lock`;
   await fs.promises.mkdir(path.dirname(lockPath), { recursive: true }).catch(() => {});
@@ -115,18 +149,35 @@ async function acquireProcessLock(brainId: string): Promise<(() => Promise<void>
   while (Date.now() < deadline) {
     try {
       const fh = await fs.promises.open(lockPath, 'wx'); // exclusive create
-      await fh.write(`${process.pid}\n${os.hostname()}\n${LOCK_FORMAT}`); // pid + host + format
+      // A per-acquisition nonce so release() can tell OUR lock from one that replaced it.
+      const nonce = randomBytes(8).toString('hex');
+      let beats = 0;
+      const stamp = () => `${process.pid}\n${os.hostname()}\n${LOCK_FORMAT}\n${nonce}:${beats}`;
+      await fh.write(stamp());
       await fh.close();
-      // Keep proving we're alive for as long as we hold it. unref'd so it can never keep the process
-      // open, and best-effort — a failed touch just costs one beat out of the twelve we can miss.
+      // Heartbeat by REWRITING the beat counter, not by touching the mtime.
+      //
+      // mtime is wall-clock; setInterval is monotonic. Close a laptop lid for ten minutes and the
+      // lockfile's mtime ages by ten minutes while the holder's timer does not fire at all — so on
+      // resume a waiter read "idle for 600s" about a process that was mid-commit, stole the lock,
+      // and two processes wrote the shared git index at once. That is the corruption this lock
+      // exists to prevent, reintroduced by the staleness test itself. A counter the holder writes
+      // can only advance when the holder actually runs, so suspend is invisible to it.
       const beat = setInterval(() => {
-        const now = new Date();
-        void fs.promises.utimes(lockPath, now, now).catch(() => {});
+        beats++;
+        void fs.promises.writeFile(lockPath, stamp()).catch(() => {});
       }, LOCK_HEARTBEAT_MS);
       beat.unref();
-      return () => {
+      lockObservations.delete(lockPath);
+      return async () => {
         clearInterval(beat);
-        return fs.promises.rm(lockPath, { force: true }).catch(() => {});
+        // Only remove the lock if it is still OURS. If we were robbed (a long suspend, a clock
+        // jump), the file now belongs to another holder and deleting it would let a third process
+        // in while that holder is mid-write.
+        const cur = await fs.promises.readFile(lockPath, 'utf8').catch(() => '');
+        if (cur === '' || cur.split('\n')[3]?.startsWith(`${nonce}:`)) {
+          await fs.promises.rm(lockPath, { force: true }).catch(() => {});
+        }
       };
     } catch {
       // Decide whether to steal a contended lock. Leaving one alone needs BOTH: the owner still
@@ -142,10 +193,25 @@ async function acquireProcessLock(brainId: string): Promise<(() => Promise<void>
       try {
         const raw = await fs.promises.readFile(lockPath, 'utf8').catch(() => '');
         const st = await fs.promises.stat(lockPath);
-        const [pidStr, hostStr = '', fmt = ''] = raw.split('\n');
+        const [pidStr, hostStr = '', fmt = '', beatField = ''] = raw.split('\n');
         const pid = parseInt(pidStr, 10);
         const sameMachine = hostStr.trim() === os.hostname();
-        const idleMs = Date.now() - st.mtimeMs;
+        const beats = fmt.trim() === LOCK_FORMAT;
+
+        // "Has the holder made progress since we last looked?" — measured in OUR clock, against a
+        // counter only the holder can advance. Two observations, not one, and never mtime: see the
+        // heartbeat comment above for why wall-clock age reads a suspended machine as a dead holder.
+        let stalledMs = 0;
+        if (beats) {
+          const prev = lockObservations.get(lockPath);
+          if (!prev || prev.beat !== beatField) {
+            lockObservations.set(lockPath, { beat: beatField, firstSeenAt: Date.now() });
+          } else {
+            stalledMs = Date.now() - prev.firstSeenAt;
+          }
+        }
+        const idleMs = Date.now() - st.mtimeMs; // legacy locks only — no counter to read
+
         let steal: boolean;
         if (sameMachine && Number.isFinite(pid) && pid > 0) {
           let alive = true;
@@ -159,12 +225,14 @@ async function acquireProcessLock(brainId: string): Promise<(() => Promise<void>
           }
           // No format marker → written by an older build that never beat; age it out on wall-clock
           // instead, so a legacy lock can still be recovered rather than pinning history forever.
-          steal = !alive || idleMs > (fmt.trim() === LOCK_FORMAT ? LOCK_STALE_MS : LOCK_ABANDONED_MS);
+          steal = !alive || (beats ? stalledMs > LOCK_STALE_MS : idleMs > LOCK_ABANDONED_MS);
         } else {
           // Different (or unreadable/legacy-format) machine — a OneDrive/iCloud synced git-dir. The
-          // pid is meaningless against our local process table, so wall-clock age is all we have.
-          steal = idleMs > LOCK_ABANDONED_MS;
+          // pid is meaningless against our local process table. A beating lock still tells us
+          // something (the counter advances wherever it runs); a legacy one leaves only wall-clock.
+          steal = beats ? stalledMs > LOCK_ABANDONED_MS : idleMs > LOCK_ABANDONED_MS;
         }
+        if (steal) lockObservations.delete(lockPath);
         if (steal) await fs.promises.rm(lockPath, { force: true });
       } catch {
         /* lock vanished — retry */
@@ -253,8 +321,25 @@ const retentionDue = new Set<string>();
  *  the kept set BEFORE it unlinks anything, so an interrupted pass leaves reclaimable garbage, never
  *  a ref naming a deleted object. */
 function scheduleRetention(brainId: string): void {
-  if (!retentionDue.delete(gitdirFor(brainId))) return;
-  setTimeout(() => void pruneHistory(brainId).catch(() => {}), 0).unref();
+  const gitdir = gitdirFor(brainId);
+  if (!retentionDue.delete(gitdir)) return;
+  setTimeout(() => {
+    // If writes are queued right now, don't even take the lock — put it back and wait for a later
+    // trigger. A brain being actively written to is precisely when retention must stay out of the
+    // way, and there is no deadline: the store is bounded across restarts by the boot pass.
+    if (writersWaiting(brainId)) {
+      retentionDue.add(gitdir);
+      return;
+    }
+    void withWriteLock(brainId, async () => {
+      if (!(await hasHead(gitdir))) return 0;
+      // Aborts mid-pass the moment a save queues. Partial passes are safe and simply resume next
+      // trigger, so a busy brain trades a slightly larger store for never blocking a write.
+      const reclaimed = await pruneIfNeeded(gitdir, () => writersWaiting(brainId));
+      if (reclaimed === PRUNE_ABORTED) retentionDue.add(gitdir); // yielded — try after this write
+      return reclaimed;
+    }).catch(() => {});
+  }, 0).unref();
 }
 
 async function commit(gitdir: string, vaultRoot: string, source: string, message: string): Promise<string> {
@@ -295,9 +380,22 @@ async function collectReachable(gitdir: string, treeOid: string, seen: Set<strin
 // the kept set: we delete objects LAST so a crash mid-sweep can never leave a ref naming an object
 // we removed. (Concurrent readers in another process are unlocked by design; the worst case is one
 // timeline read that throws and is caught, not a damaged repo.)
-async function sweepUnreachable(gitdir: string, keptCommits: string[]): Promise<number> {
+async function sweepUnreachable(
+  gitdir: string,
+  keptCommits: string[],
+  shouldAbort?: () => boolean,
+): Promise<number> {
   const keep = new Set<string>(keptCommits);
+  let i = 0;
   for (const oid of keptCommits) {
+    // Bail out to a waiting writer. Safe at any point: the refs and the shallow marker already name
+    // the kept set, so stopping early only leaves reclaimable garbage for the next pass — never a
+    // ref pointing at something we deleted.
+    //
+    // Every 8 commits, not 64: the check is a Map lookup, but each iteration reads a commit and
+    // walks its tree, so 64 iterations was ~300-550ms of granularity — measured as exactly that much
+    // added to a save that arrived mid-pass. The check is free; the work between checks is not.
+    if ((i++ & 7) === 0 && shouldAbort?.()) return PRUNE_ABORTED;
     const { commit } = await git.readCommit({ fs, gitdir, oid });
     await collectReachable(gitdir, commit.tree, keep);
   }
@@ -319,6 +417,7 @@ async function sweepUnreachable(gitdir: string, keptCommits: string[]): Promise<
   const objRoot = path.join(gitdir, 'objects');
   for (const bucket of await fs.promises.readdir(objRoot).catch(() => [] as string[])) {
     if (!/^[0-9a-f]{2}$/.test(bucket)) continue; // 2-hex buckets only — never info/ or pack/
+    if (shouldAbort?.()) return PRUNE_ABORTED; // yield between buckets too — see the check above
     const dir = path.join(objRoot, bucket);
     for (const name of await fs.promises.readdir(dir).catch(() => [] as string[])) {
       if (!/^[0-9a-f]{38}$/.test(name) || keep.has(bucket + name)) continue;
@@ -336,12 +435,32 @@ async function sweepUnreachable(gitdir: string, keptCommits: string[]): Promise<
 // and simply stops there instead of following a parent we deleted, and — the reason it's worth
 // doing this way — every kept commit keeps its exact oid, so a version id the History panel is
 // already holding is still restorable after a prune. A rewrite would silently invalidate all of them.
-async function pruneIfNeeded(gitdir: string): Promise<number> {
-  const log = await git.log({ fs, gitdir, depth: KEEP_VERSIONS + 1 }).catch(() => []);
-  if (log.length <= KEEP_VERSIONS) return 0; // depth-capped, so this costs O(KEEP_VERSIONS) at worst
+// Returns objects reclaimed, or PRUNE_ABORTED if it yielded to a writer part-way. The caller MUST
+// distinguish those: re-arming on "nothing to do" makes every subsequent write trigger another full
+// git.log walk, which is O(commits) per write — quadratic over a session, and it hung a 4,000-version
+// test outright. Only an abort deserves a retry.
+const PRUNE_ABORTED = -1;
+async function pruneIfNeeded(gitdir: string, shouldAbort?: () => boolean): Promise<number> {
+  // Hysteresis. The old test was `> KEEP_VERSIONS`, so once a store was over the cap it re-ran the
+  // FULL O(KEEP) sweep on every trigger — to reclaim as little as one commit. Waiting for real slack
+  // amortises that sweep over PRUNE_SLACK commits instead of paying it again and again.
+  // Check BEFORE the walk as well as after. The git.log below is the one part of this pass that
+  // cannot be interrupted — it is a single library call — so on a store near the cap it holds the
+  // lock for a few hundred ms no matter what the abort checks do. That is the residual cost of
+  // retention on a save that lands in exactly that window (measured ~400ms at 1,600 commits, and it
+  // grows with KEEP_VERSIONS). Not zero, and not worth pretending otherwise; it happens at most once
+  // per boot and every later save in the same pass sees ~10-25ms because the sweep DOES yield.
+  if (shouldAbort?.()) return PRUNE_ABORTED;
+  const log = await git.log({ fs, gitdir, depth: KEEP_VERSIONS + PRUNE_SLACK + 1 }).catch(() => []);
+  if (log.length <= KEEP_VERSIONS + PRUNE_SLACK) return 0;
+  if (shouldAbort?.()) return PRUNE_ABORTED;
   const kept = log.slice(0, KEEP_VERSIONS).map((c) => c.oid);
+  // Shallow FIRST, before anything is unlinked. listVersions runs unlocked now, so a timeline read
+  // can be walking this chain right now; publishing the new boundary before the sweep means such a
+  // walk stops at a commit that still exists instead of following a parent into the region we are
+  // about to delete (which it would surface as "this note has no history").
   await fs.promises.writeFile(path.join(gitdir, 'shallow'), `${kept[kept.length - 1]}\n`);
-  return sweepUnreachable(gitdir, kept);
+  return sweepUnreachable(gitdir, kept, shouldAbort);
 }
 
 // Public: apply retention now. The write path already does this every PRUNE_EVERY_COMMITS commits;
@@ -375,10 +494,13 @@ export async function ensureHistory(vaultRoot: string, brainId: string): Promise
   const gitdir = gitdirFor(brainId);
   await withWriteLock(brainId, async () => {
     await initIfNeeded(vaultRoot, gitdir);
-    // Boot is the other retention hook (the write path counts commits): it catches a store left
-    // over budget by a previous run. Both callers already invoke ensureHistory fire-and-forget.
-    await pruneIfNeeded(gitdir).catch(() => {});
   });
+  // Retention is NOT awaited inside that lock. It used to be, on the theory that boot is free
+  // because nothing is saving yet — but ensureHistory and snapshotNote share one per-brain queue, so
+  // a note saved seconds after launch simply queued behind the whole pass. Detached, and it yields
+  // to any real write, so the worst a save can wait is one abort check.
+  retentionDue.add(gitdir);
+  scheduleRetention(brainId);
 }
 
 // Public: snapshot the CURRENT on-disk content of one note as a new version, attributed to
@@ -393,7 +515,7 @@ export async function snapshotNote(
   message?: string,
 ): Promise<string | null> {
   const gitdir = gitdirFor(brainId);
-  return withWriteLock(brainId, async () => {
+  return trackWrite(brainId, async () => {
     await initIfNeeded(vaultRoot, gitdir);
     const abs = path.join(vaultRoot, relpath);
     let onDisk = true;
@@ -549,7 +671,7 @@ async function listHeadNotePaths(vaultRoot: string, gitdir: string): Promise<str
 // traversal statusMatrix would otherwise stat-walk on every capture.
 export async function captureExternal(vaultRoot: string, brainId: string): Promise<ExternalChange[]> {
   const gitdir = gitdirFor(brainId);
-  return withWriteLock(brainId, async () => {
+  return trackWrite(brainId, async () => {
     await initIfNeeded(vaultRoot, gitdir);
     const onDisk = await listNotePaths(vaultRoot);
     const onDiskSet = new Set(onDisk);
@@ -645,7 +767,7 @@ async function treeWithout(gitdir: string, treeOid: string, segments: string[]):
 export async function purgeNote(vaultRoot: string, brainId: string, relpath: string): Promise<number> {
   const gitdir = gitdirFor(brainId);
   const filepath = relpath.replace(/\\/g, '/'); // git paths are always '/'-separated
-  return withWriteLock(brainId, async () => {
+  return trackWrite(brainId, async () => {
     if (!(await hasHead(gitdir))) return 0;
     const versions = await git.log({ fs, dir: vaultRoot, gitdir, filepath, force: true }).catch(() => []);
     if (!versions.length) return 0; // never versioned here — nothing to erase, nothing to rewrite

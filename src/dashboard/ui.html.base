@@ -1213,25 +1213,57 @@ function startWeb(){
 // and the first one to finish must not clear the cursor while the other runs.
 let __busyN = 0;
 function busyCursor(on){ __busyN = Math.max(0, __busyN + (on ? 1 : -1)); document.body.classList.toggle('is-busy', __busyN > 0); }
+// #reindexBtn lives in the persistent top bar: it is never re-rendered and its onclick is bound
+// once at boot, so anything written here stays on screen for the rest of the session. A transient
+// message therefore has to clear itself.
+let __reindexHintTimer = null;
+function reindexIdle(btn){ if(!btn) return; btn.textContent='re-index'; btn.title=''; }
+function reindexHint(btn, label, title){
+  if(!btn) return;
+  clearTimeout(__reindexHintTimer);
+  btn.textContent = label; btn.title = title || '';
+  __reindexHintTimer = setTimeout(()=>{ __reindexHintTimer=null; if(!state.reindexing) reindexIdle(btn); }, 6000);
+}
 function reindex(){
+  const btn=$('#reindexBtn');
   if(state.reindexing) return;
+  // st_reindexing is the SAME rebuild, started from Settings. Opening a second stream only trips
+  // the server's single-ingest guard (server.ts:676) and the reply used to be painted as a failure
+  // of the run that is, at that moment, working perfectly. Don't start it; say what's happening.
+  if(state.st_reindexing){
+    reindexHint(btn, 'already re-indexing…', 'A re-index started in Settings is still running. Your brain is being rebuilt — this button frees up when it finishes.');
+    announce('a re-index is already running');
+    return;
+  }
+  clearTimeout(__reindexHintTimer); __reindexHintTimer=null;
   state.reindexing=true; busyCursor(true);
-  const btn=$('#reindexBtn'); btn.textContent='re-indexing…'; btn.style.color='var(--danger)'; btn.style.borderColor='var(--danger)';
+  btn.textContent='re-indexing…'; btn.title=''; btn.style.color='var(--danger)'; btn.style.borderColor='var(--danger)';
   announce('re-indexing your brain');
   const es=new EventSource(CCT_Q('/api/ingest'));
   // A failed re-index must LOOK failed. This used to drop straight back to the idle 're-index'
   // label, which is the same thing a success leaves behind — so a stream that died mid-way was
   // indistinguishable from one that finished, and the user carried on believing their brain had
   // been rebuilt. The button holds a visible failed state until the next attempt.
-  const done=async(reload)=>{ es.close(); state.reindexing=false; busyCursor(false);
-    btn.textContent = reload ? 're-index' : 're-index failed — retry';
+  //
+  // But only for a REAL failure. The stream reports two different things through the same 'error'
+  // event: a transport drop (no payload) and a server-sent `event: error` whose data carries the
+  // reason — and the single-ingest guard's reason means another run is rebuilding the brain right
+  // now and will finish. Claiming "your brain was not rebuilt" there is false, and on this button
+  // it is false forever. Read the payload, the way render-settings.js does for the same event.
+  const done=async(reload,msg)=>{ es.close(); state.reindexing=false; busyCursor(false);
     btn.style.color='var(--danger)'; btn.style.borderColor='var(--danger)';
-    btn.title = reload ? '' : 'The re-index stopped before it finished. Your brain was not fully rebuilt — click to try again.';
-    announce(reload ? 'index updated' : 're-index failed — your brain was not rebuilt');
+    const busy = !reload && /already running/i.test(String(msg||''));
+    if(reload){ reindexIdle(btn); }
+    else if(busy){ reindexHint(btn, 'already re-indexing…', String(msg)); }
+    else {
+      btn.textContent = 're-index failed — retry';
+      btn.title = (msg ? String(msg)+' ' : '') + 'The re-index stopped before it finished. Your brain was not fully rebuilt — click to try again.';
+    }
+    announce(reload ? 'index updated' : busy ? String(msg) : (msg ? String(msg)+' ' : '')+'re-index failed — your brain was not rebuilt');
     if(reload){ await loadOverview(); await loadActivity(); if(state.screen==='overview') render(); } };
   es.addEventListener('phase',e=>{ try{ const d=JSON.parse(e.data); btn.textContent=d.label+'…'; announce(d.label); }catch(_){} });
   es.addEventListener('done',()=>done(true));
-  es.addEventListener('error',()=>done(false));
+  es.addEventListener('error',e=>{ let msg=null; try{ const d=JSON.parse(e&&e.data); if(d&&d.message) msg=String(d.message); }catch(_){} done(false,msg); });
 }
 
 // ── theme + clock ──

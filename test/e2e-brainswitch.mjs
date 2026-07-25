@@ -50,7 +50,7 @@ const tokenA = await setup(brainA, 'Espresso Ratios', 'qwertyalpha', 'agent-a');
 const tokenB = await setup(brainB, 'Green Tea Steeping', 'qwertybravo', 'agent-b');
 
 let current = brainA; // the "cockpit's live brain" — mutated by the switch below
-await serveHttp({ getBrain: () => current, port: PORT, host: '127.0.0.1' });
+const srv = await serveHttp({ getBrain: () => current, port: PORT, host: '127.0.0.1' });
 
 const mkClient = async (token) => {
   const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${PORT}/mcp`), {
@@ -89,4 +89,7 @@ console.log(`\n  ${pass} passed, ${fail} failed`);
 await fs.rm(brainA, { recursive: true, force: true });
 await fs.rm(brainB, { recursive: true, force: true });
 if (fail === 0) console.log('  ALL PASS');
+// Close the listener before exiting: process.exit() with a live handle aborts inside
+// libuv on Windows instead of raising a catchable error.
+await srv?.close?.().catch(() => {});
 process.exit(fail ? 1 : 0);

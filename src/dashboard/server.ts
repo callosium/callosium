@@ -27,7 +27,7 @@ import { readActions, logAction } from '../audit/log.ts';
 import { buildLinkerIndex, suggestLinks, applyLinks } from '../linking/suggest.ts';
 import { aliasesOf } from '../core/aliases.ts';
 import { pairAgent, loadAgents, updateAgents, rotateAgentToken, renameAgent } from './../mcp/agents.ts';
-import { serveHttp, mcpCacheSource, type BrainSource } from './../mcp/server.ts';
+import { serveHttp, mcpCacheSource, type BrainSource, type ServerHandle } from './../mcp/server.ts';
 import { liveBanner } from '../util/term.ts';
 import type { GraphIndex } from '../core/types.ts';
 
@@ -1664,7 +1664,7 @@ async function handleInit(res: http.ServerResponse, body: Json) {
   }
 }
 
-export async function serveDashboard(opts: { port?: number; brain?: string; mcpPort?: number } = {}): Promise<void> {
+export async function serveDashboard(opts: { port?: number; brain?: string; mcpPort?: number } = {}): Promise<ServerHandle> {
   const port = opts.port ?? 4319;
   const mcpPort = opts.mcpPort ?? 4321; // serveHttp's default; overridable for tests / a second instance
 
@@ -1690,8 +1690,16 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
   // during fresh onboarding (it answers 503 until a brain is connected, then
   // serves it) — no relaunch needed. It reads the brain through OUR cache
   // (mcpBrainSource) rather than loading a second copy of it into this process.
+  // Keep the handle so closing the dashboard also closes the endpoint it started.
+  // Leaving it listening after the cockpit is gone would hold the port (the next
+  // start would log a bind failure and silently run without an MCP endpoint) and
+  // keep the event loop alive.
+  let mcpHandle: { close(): Promise<void> } | null = null;
   serveHttp({ getBrain: () => brainPath, brain: mcpBrainSource(), port: mcpPort })
-    .then(() => console.error(`callosium: MCP endpoint live at http://127.0.0.1:${mcpPort}/mcp (bearer-token auth) — for a public HTTPS URL, front it with a tunnel`))
+    .then((h) => {
+      mcpHandle = h;
+      console.error(`callosium: MCP endpoint live at http://127.0.0.1:${mcpPort}/mcp (bearer-token auth) — for a public HTTPS URL, front it with a tunnel`);
+    })
     .catch((e) => console.error(`callosium: MCP HTTP endpoint not auto-started (${(e as Error).message}); run 'callosium mcp --http' if you need URL+token clients`));
 
   // Reject any request that a browser marks as (or reveals via Origin/Referer to
@@ -1918,4 +1926,15 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
       /* no browser to open — the URL is printed in the banner above */
     }
   }
+  // Shut down BOTH listeners this call started. Same reason serveHttp returns one:
+  // exiting with a listener still open aborts inside libuv on Windows instead of
+  // raising something catchable. Best-effort on the MCP side — it is auto-started
+  // fire-and-forget, so it may legitimately never have bound (port already taken).
+  return {
+    async close(): Promise<void> {
+      await mcpHandle?.close().catch(() => {});
+      server.closeAllConnections?.();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
 }

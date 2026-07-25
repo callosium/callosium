@@ -83,8 +83,13 @@ const callTool = async (client, name, args) => (await client.callTool({ name, ar
 // brain (its own cache — the pre-fix shape). Prints one number for the parent.
 const MODE = process.env.SHAREDBRAIN_MODE;
 if (MODE) {
+  // Every listener this child opens, so it can close them before exiting. Exiting
+  // with one still open aborts inside libuv on Windows ("Assertion failed:
+  // !(handle->flags & UV_HANDLE_CLOSING)") rather than raising anything catchable —
+  // it broke a CI run and then passed on retry, which is the worst kind of flake.
+  const opened = [];
   const token = await tokenOf(brainA, 'agent-a');
-  await serveDashboard({ port: DASH_PORT, brain: brainA, mcpPort: MCP_PORT });
+  opened.push(await serveDashboard({ port: DASH_PORT, brain: brainA, mcpPort: MCP_PORT }));
   const html = await fetch(`http://127.0.0.1:${DASH_PORT}/`).then((r) => r.text());
   const cct = (html.match(/<meta name="cct" content="([^"]+)"/) || [, ''])[1];
   // /api/state goes through loadAll → texts + graph + embeddings. This is the ONE
@@ -92,7 +97,7 @@ if (MODE) {
   await fetch(`http://127.0.0.1:${DASH_PORT}/api/state`, { headers: { 'x-callosium-token': cct } }).then((r) => r.json());
   let port = MCP_PORT;
   if (MODE === 'private') {
-    await serveHttp({ brainPath: brainA, port: CTRL_PORT, host: '127.0.0.1' });
+    opened.push(await serveHttp({ brainPath: brainA, port: CTRL_PORT, host: '127.0.0.1' }));
     port = CTRL_PORT;
   }
   const c = await mkClient(port, token);
@@ -106,10 +111,17 @@ if (MODE) {
   await new Promise((r) => setTimeout(r, 250));
   global.gc?.();
   console.log(`SHAREDBRAIN_RESULT ${process.memoryUsage().arrayBuffers} ${/qwertyalpha/i.test(answer) ? 'served' : 'MISSING'}`);
+  // Close every listener before exiting (see `opened` above). Best-effort: the
+  // measurement is already printed, so a close failure must not fail the child.
+  for (const h of opened) await h?.close?.().catch(() => {});
   process.exit(0);
 }
 
 // ── parent ─────────────────────────────────────────────────────────────────────
+// Declared at module scope so the exit path below can close it: the dashboard is
+// started inside a block, and exiting with the listener still open aborts inside
+// libuv on Windows rather than raising a catchable error.
+let parentDash = null;
 let pass = 0, fail = 0;
 const ok = (name, cond, extra = '') => {
   if (cond) { pass++; console.log(`  ✓ ${name}`); }
@@ -227,7 +239,7 @@ try {
     priv.bytes - shared.bytes > FLOOR, MB(priv.bytes - shared.bytes));
 
   // ── 2) an MCP write is visible on BOTH surfaces at once ─────────────────────
-  await serveDashboard({ port: DASH_PORT, brain: brainA, mcpPort: MCP_PORT });
+  parentDash = await serveDashboard({ port: DASH_PORT, brain: brainA, mcpPort: MCP_PORT });
   const html = await fetch(`http://127.0.0.1:${DASH_PORT}/`).then((r) => r.text());
   cct = (html.match(/<meta name="cct" content="([^"]+)"/) || [, ''])[1];
   ok('dashboard boots and hands out a caller token', !!cct);
@@ -279,4 +291,7 @@ try {
 
 console.log(`\n  ${pass} passed, ${fail} failed`);
 if (fail === 0) console.log('  ALL PASS');
+// Same reason as the child: close the listener before exiting, or Windows aborts
+// inside libuv instead of exiting.
+await parentDash?.close?.().catch(() => {});
 process.exit(fail ? 1 : 0);

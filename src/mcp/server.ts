@@ -306,6 +306,14 @@ function freshMcpCache(): McpCache {
  *     what the freshness gate below exists to prevent.
  *   - invalidate() is called after every write this server makes and must drop
  *     whatever the host derived from the brain, so the next read reflects it. */
+/** A running server the caller can shut down. Returned by serveHttp (and mirrored by
+ *  serveDashboard) so an embedder or a test can stop listening instead of being forced
+ *  to process.exit() with the listener still open — which on Windows aborts the process
+ *  inside libuv rather than raising a catchable error. */
+export interface ServerHandle {
+  close(): Promise<void>;
+}
+
 export interface BrainSource {
   texts(vault: Vault): Promise<VaultTexts>;
   /** Always a graph: a missing graph.json is BUILT, never served as null (tools
@@ -1664,7 +1672,7 @@ export async function serveHttp(opts: {
    *  surfaces (peak-RAM bound). Omitted → a private cache, as when the owner runs
    *  `callosium mcp --http` standalone. See BrainSource for the contract. */
   brain?: BrainSource;
-}): Promise<void> {
+}): Promise<ServerHandle> {
   const port = opts.port ?? 4321;
   const host = opts.host ?? '127.0.0.1';
   // ONE brain source shared across every request's per-request server (this
@@ -1732,4 +1740,16 @@ export async function serveHttp(opts: {
     });
   });
   console.error(`callosium mcp: serving ${opts.brainPath ? `"${opts.brainPath}" ` : ''}over http://${host}:${port}/mcp (bearer-token auth)`);
+  // Hand the caller a way to shut this down. Without one the only exit was
+  // process.exit() with the listener still open, which on Windows races libuv into
+  // `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` — a native abort, not a
+  // catchable error. That aborted a CI run and would equally abort an embedder.
+  // closeAllConnections() first: server.close() only stops NEW connections and
+  // waits for existing (keep-alive) ones, so a connected agent would hang the exit.
+  return {
+    async close(): Promise<void> {
+      httpServer.closeAllConnections?.();
+      await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    },
+  };
 }

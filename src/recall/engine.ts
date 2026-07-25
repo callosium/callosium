@@ -163,6 +163,9 @@ export async function loadTexts(vault: Vault, withIndex = true): Promise<VaultTe
   const mtimes = new Map<string, number>();
   const archived = new Set<string>();
   const unreadable = new Set<string>();
+  /** Per-note ceiling for the INDEX. Matches fetch_document's PER_FILE_HARD_CAP so a note
+   *  that is too big to serve is also too big to index, rather than the two disagreeing. */
+  const MAX_NOTE_BYTES = 5_000_000;
   // Read notes with BOUNDED concurrency instead of one-at-a-time: the reads are
   // I/O-bound (each `await` idled the event loop between files), so a small pool
   // cuts cold-load wall time markedly on a real brain. Each result is stored at
@@ -178,6 +181,18 @@ export async function loadTexts(vault: Vault, withIndex = true): Promise<VaultTe
       if (i >= all.length) return;
       const f = all[i];
       try {
+        // Per-file ceiling. A note is a note; anything past this is a pasted dataset, a
+        // log dump, or a corrupted file, and reading it here costs far more than its
+        // size: the string is NFC-normalized (a second copy), tokenized, and held in the
+        // rank index for the life of the process. One 500MB file could take the whole
+        // index down on EVERY load, and the failure recurs on every re-index rather than
+        // once. Treated exactly like an unreadable note — surfaced, not silently
+        // dropped — so the owner can see it in Health and decide.
+        const size = await vault.statSize(f).catch(() => null);
+        if (size !== null && size > MAX_NOTE_BYTES) {
+          slots[i] = { unreadable: true };
+          continue;
+        }
         // NFC-normalize once at load: queries are NFC-normalized in tokenize(),
         // so decomposed (NFD) vault text — common in Arabic-with-diacritics and
         // in files round-tripped through macOS/iCloud/OneDrive — would silently

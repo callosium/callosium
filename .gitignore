@@ -4,6 +4,15 @@ dist/
 .env
 .DS_Store
 
+# Cloud sync-conflict copies (OneDrive/iCloud/Dropbox). These duplicate a real file
+# under a name that embeds a PERSON and a DEVICE — "package-Jane’s MacBook Air.json"
+# — so a single `git add -A` publishes an identity leak in a filename, where no
+# content scan would think to look. Both apostrophe styles, since OneDrive uses the
+# typographic one.
+*’s *
+*'s *
+*conflicted copy*
+
 # generated from a real brain during testing — never commit personal vault content
 test/scenarios.json
 test/scenarios-v2.json

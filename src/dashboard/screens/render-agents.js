@@ -72,8 +72,14 @@ function ag_setPerm(sc, partitions, p, perm){
     // Materialize write to the EXPLICIT set of currently-writable folders before
     // touching it: an empty write means "writable everywhere readable", which
     // can't be told apart from "nothing writable" once we add/remove one folder.
-    write = ag_wo(write, AG_WRITE_NONE);  // drop any prior sentinel first
-    if(write.length === 0) write = ag_currentReadable({ read, denyRead:deny, write:[] }, partitions).map(ag_trail);
+    // Remember the sentinel BEFORE stripping it. [AG_WRITE_NONE] means "nothing is
+    // writable"; a genuinely empty write means "unset → writable everywhere readable".
+    // Stripping first collapsed those two opposite states into one, so an agent the
+    // owner had explicitly set to write-nothing was silently re-materialized as
+    // write-everything-readable the next time ANY folder's read permission changed.
+    const wroteNothing = write.includes(AG_WRITE_NONE);
+    write = ag_wo(write, AG_WRITE_NONE);
+    if(write.length === 0 && !wroteNothing) write = ag_currentReadable({ read, denyRead:deny, write:[] }, partitions).map(ag_trail);
     if(perm === 'look') write = ag_wo(write, pk);
     else                write = ag_union(write, pk);  // edit
     // If the look-downgrade removed the last writable folder, keep write

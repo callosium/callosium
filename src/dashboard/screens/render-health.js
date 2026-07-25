@@ -591,7 +591,19 @@ async function healthDismissAllOrphans(){
 // ── copy-AI-prompt handoff: build a ready-to-paste prompt from the real findings ──
 function healthPromptText(groupId){
   const d = state.health_data; if(!d || !d.findings) return '';
-  const F = d.findings;
+  // This text is copied for the owner to paste into a THIRD-PARTY AI, so it is a route
+  // OFF the device. The cockpit is the owner's own view and may display Private/ freely,
+  // but the product's promise is that the gated partition does not leave the machine —
+  // so gated notes are withheld here, in paths, targets and free-text detail alike, and
+  // the omission is stated rather than silent.
+  const GATED = /(^|\/)Private\//i;
+  const isGated = (f) => GATED.test(f.path||'') || GATED.test(f.related||'') || GATED.test(f.target||'') || GATED.test(f.detail||'');
+  const all = d.findings;
+  const F = all.filter(f => !isGated(f));
+  const withheld = all.length - F.length;
+  const privacyNote = withheld
+    ? `\n\nNote: ${withheld} item${withheld===1?'':'s'} under your gated Private/ partition ${withheld===1?'was':'were'} deliberately left out of this prompt so nothing from it leaves your device. Handle those in Callosium directly.`
+    : '';
   // Shared guardrails: these lists can contain FALSE POSITIVES, verbatim source is
   // off-limits, and I want a report of what was NOT a real issue so I can dismiss it.
   const intro = 'You have access to my Callosium knowledge vault through its MCP tools (search, read_note, resolve, write_note). Work carefully and reversibly. Two hard rules for the task below:\n'
@@ -605,32 +617,32 @@ function healthPromptText(groupId){
       + '- The referenced note EXISTS under a renamed/split/different name → repoint the link (use search/resolve to find it).\n'
       + '- It points at something that is NOT a note — a skill, a file/attachment, one of my AI memories, or a bare syntax example like [[name]]/[[text]] → remove the [[ ]] and keep the plain text.\n'
       + '- It is a note I genuinely should create → do NOT create it; just list it so I decide.\n'
-      + 'Do not create new notes.\n\nBroken links (note → missing target):\n'+lines;
+      + 'Do not create new notes.\n\nBroken links (note → missing target):\n'+lines+privacyNote;
   }
   if(groupId === 'dupes'){
     const items = F.filter(f=>f.kind==='duplicate-alias').slice(0,100);
     const lines = items.map(f=>'- '+(f.detail||'')).join('\n');
-    return intro+'Task — notes that share a name, so a [[link]] can land on the wrong one. For each, open them and decide: if they are TRUE duplicates (near-identical content), keep one and delete the rest; if they are DISTINCT notes that merely share a name, decide which owns the bare name and rename/re-alias the others; if the folder itself conveys a meaningful stage (e.g. Tender vs Submitted), leave both and just disambiguate the name. Confirm with me before deleting anything.\n\nShared names:\n'+lines;
+    return intro+'Task — notes that share a name, so a [[link]] can land on the wrong one. For each, open them and decide: if they are TRUE duplicates (near-identical content), keep one and delete the rest; if they are DISTINCT notes that merely share a name, decide which owns the bare name and rename/re-alias the others; if the folder itself conveys a meaningful stage (e.g. Tender vs Submitted), leave both and just disambiguate the name. Confirm with me before deleting anything.\n\nShared names:\n'+lines+privacyNote;
   }
   if(groupId === 'sync'){
     const items = F.filter(f=>f.kind==='sync-conflict-copy').slice(0,100);
     const lines = items.map(f=>'- '+f.path+(f.related?('   (copy of '+f.related+')'):'')).join('\n');
-    return intro+'Task — files that look like cloud-sync conflict copies. For each, compare it to its original: if it is truly redundant, merge anything unique into the original then delete the copy; if it turns out to be a distinct note, leave it. Confirm before deleting.\n\nConflict copies:\n'+lines;
+    return intro+'Task — files that look like cloud-sync conflict copies. For each, compare it to its original: if it is truly redundant, merge anything unique into the original then delete the copy; if it turns out to be a distinct note, leave it. Confirm before deleting.\n\nConflict copies:\n'+lines+privacyNote;
   }
   if(groupId === 'datedrift'){
     const items = F.filter(f=>f.kind==='dated-note-drift').slice(0,100);
     const lines = items.map(f=>'- '+f.path+'  — '+(f.detail||'')).join('\n');
-    return intro+'Task — dated notes (memory records, session logs) that kept being appended to on later days, so one note now holds several days of work. For EACH: read it, split the body by the day each entry actually belongs to (the dates and attribution comments in the body tell you), then create one note per day following the dailyMemory naming rule from get_filing_rules. Keep the original day in the original note, move each later day into its own new note, preserve the wording verbatim, and update any links that pointed at the original. Do not delete anything until the split notes exist.\n\nNotes:\n'+lines;
+    return intro+'Task — dated notes (memory records, session logs) that kept being appended to on later days, so one note now holds several days of work. For EACH: read it, split the body by the day each entry actually belongs to (the dates and attribution comments in the body tell you), then create one note per day following the dailyMemory naming rule from get_filing_rules. Keep the original day in the original note, move each later day into its own new note, preserve the wording verbatim, and update any links that pointed at the original. Do not delete anything until the split notes exist.\n\nNotes:\n'+lines+privacyNote;
   }
   if(groupId === 'hubgaps'){
     const items = F.filter(f=>f.kind==='hub-gap').slice(0,100);
     const lines = items.map(f=>'- '+f.path+'  — '+(f.detail||'')).join('\n');
-    return intro+'Task — folders that are not wired into my maps-of-content. For each: if the folder holds notes but has no hub, create ONE hub note inside it (type: moc, named "<Folder> Home"), list that folder\'s notes in it, and add one line stating what belongs in that folder; if a hub already exists but is not linked from its parent hub, add the link in the PARENT hub. Do not move, rename, or rewrite the notes themselves.\n\nFolders:\n'+lines;
+    return intro+'Task — folders that are not wired into my maps-of-content. For each: if the folder holds notes but has no hub, create ONE hub note inside it (type: moc, named "<Folder> Home"), list that folder\'s notes in it, and add one line stating what belongs in that folder; if a hub already exists but is not linked from its parent hub, add the link in the PARENT hub. Do not move, rename, or rewrite the notes themselves.\n\nFolders:\n'+lines+privacyNote;
   }
   if(groupId === 'format'){
     const items = F.filter(f=>['unknown-type','invalid-frontmatter','invalid-status','missing-frontmatter'].indexOf(f.kind)!==-1).slice(0,150);
     const lines = items.map(f=>'- '+f.path+'  — '+(f.detail||'')).join('\n');
-    return intro+'Task — notes that don\'t match my note format. For each, read it and fix the frontmatter to match my conventions (correct type/status, add missing required fields) WITHOUT changing the note\'s meaning or body.\n\nNotes:\n'+lines;
+    return intro+'Task — notes that don\'t match my note format. For each, read it and fix the frontmatter to match my conventions (correct type/status, add missing required fields) WITHOUT changing the note\'s meaning or body.\n\nNotes:\n'+lines+privacyNote;
   }
   return '';
 }

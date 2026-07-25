@@ -73,9 +73,30 @@ function notesRenderMarkdown(body){
     // per-block attribution marker → a subtle "✍ written by X" badge under the block
     const am = ln.match(/<!--\s*✍ written by (.+?) on (\d{4}-\d{2}-\d{2})\s*-->/);
     if(am){ out += '<div style="font-family:var(--mono);font-size:10.5px;color:var(--faint);margin:-3px 0 11px;display:flex;align-items:center;gap:6px"><span style="color:var(--synapse)">✍</span>'+t('written by','كتبها')+' <span style="color:var(--dust)">'+esc(am[1])+'</span><span style="color:var(--edge)">·</span>'+esc(am[2])+'</div>'; return; }
-    // any other HTML comment → hidden (a real markdown renderer hides it too)
-    if(inComment){ if(ln.includes('-->')) inComment=false; return; }
-    if(/^\s*<!--/.test(ln)){ if(!ln.includes('-->')) inComment=true; return; }
+    // any other HTML comment → hidden (a real markdown renderer hides it too).
+    // Strip the comment SPAN, never the whole line: this used to `return` on any
+    // line that opened or closed a comment, so "<!-- draft --> ship on Friday"
+    // and the prose after a multi-line comment's "-->" vanished from the reader
+    // entirely — real note content gone with no hint it was ever there. A line
+    // that is nothing BUT a comment still disappears (no stray blank), and an
+    // unterminated comment still hides the lines that follow until its close.
+    let hadComment = false;
+    if(inComment){
+      const end = ln.indexOf('-->');
+      if(end === -1) return;                       // still wholly inside the comment
+      ln = ln.slice(end+3); inComment = false; hadComment = true;
+    }
+    for(;;){
+      const st = ln.indexOf('<!--');
+      if(st === -1) break;
+      hadComment = true;
+      // search from st+2 so the degenerate empty comment "<!-->" closes itself
+      // instead of swallowing the rest of the note.
+      const en = ln.indexOf('-->', st+2);
+      if(en === -1){ ln = ln.slice(0,st); inComment = true; break; }
+      ln = ln.slice(0,st) + ln.slice(en+3);
+    }
+    if(hadComment && !ln.trim()) return;           // the line held nothing but the comment
     if(ln.trim()===''){ out += '<div style="height:8px"></div>'; return; }
     const e = esc(ln);
     if(/^###\s+/.test(ln)){ out += '<div style="'+B.h3+'">'+notesInline(e.replace(/^###\s+/,''))+'</div>'; return; }
@@ -92,6 +113,12 @@ function notesRenderMarkdown(body){
   return out;
 }
 function notesWordCount(body){ const t = String(body||'').trim(); return t ? t.split(/\s+/).length : 0; }
+
+// Separates the disk copy from the user's unsaved text when the save-conflict
+// banner merges the two (see the reload handler in notesRenderAll). Deliberately
+// a visible markdown heading rather than an HTML comment — comments are hidden
+// from the live preview, and this line has to be impossible to miss.
+const NOTES_MERGE_MARK = '\n\n## ⚠ your unsaved version — merge what you want into the text above, then delete from this line down\n\n';
 
 // ── data ──
 async function notesLoadNote(path){
@@ -368,7 +395,11 @@ function notesViewerHTML(){
       + '<div id="notesPreview" style="height:100%;overflow:auto;padding:18px 22px 40px;background:var(--surface)"><div style="max-width:640px">'+notesRenderMarkdown(state.notes_draftBody||'')+'</div></div>'
       + '</div>'
       + (state.notes_saveConflict
-          ? '<div style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:var(--amber);padding:9px 22px;border-top:1px solid var(--edge);line-height:1.5">this note changed on disk while you had it open — your edits are safe here. <button type="button" data-notes-reload style="color:var(--synapse);cursor:pointer;text-decoration:underline;background:none;border:0;padding:0;font:inherit">reload the disk version</button> to merge, so you don’t overwrite it.</div>'
+          // Label says exactly what the button does now. The old copy ("reload the
+          // disk version to merge") described a merge it never performed — it
+          // replaced the draft with the disk copy, so the promise on the same line
+          // that "your edits are safe here" was false the moment you clicked.
+          ? '<div style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:var(--amber);padding:9px 22px;border-top:1px solid var(--edge);line-height:1.5">this note changed on disk while you had it open — your edits are safe here. <button type="button" data-notes-reload style="color:var(--synapse);cursor:pointer;text-decoration:underline;background:none;border:0;padding:0;font:inherit">bring the disk version in</button> — it goes above your unsaved text so you can merge the two by hand. nothing is thrown away.</div>'
           : state.notes_saveError
           ? '<div style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:var(--danger);padding:9px 22px;border-top:1px solid var(--edge)">could not save to disk — nothing was changed. try again.</div>'
           : '<div style="flex-shrink:0;font-family:var(--mono);font-size:10.5px;color:var(--faint);padding:9px 22px;border-top:1px solid var(--edge)">plain markdown, saved to your disk, signed as you · <span style="color:var(--dust)">⌘B bold · ⌘I italic</span></div>');
@@ -488,15 +519,29 @@ function notesRenderAll(){
   $$('#notesHistOverlay [data-hist-restore]').forEach(el=> el.onclick = ()=> notesRestore(el.dataset.histRestore));
   // conflict banner → pull the disk version into the editor (new baseHash), so the
   // user can re-apply their change on top of what actually landed on disk.
+  // This used to assign the disk copy straight over state.notes_draftBody: the
+  // banner said "your edits are safe here" and the very next click deleted them,
+  // with no undo and no history entry (the draft was never on disk to restore).
+  // It now does what the label promises — builds a merge buffer with the disk
+  // version on top and the unsaved text kept below a visible marker, so the user
+  // reconciles them by hand and nothing is destroyed. Fixed at this control
+  // because it is the only place a draft is discarded without being asked.
   const reload = $('#screen [data-notes-reload]'); if(reload) reload.onclick = async ()=>{
     const path = state.notes_selected; if(!path) return;
+    const draft = state.notes_draftBody || '';
     try{
       const rr = await api('/api/note?path='+encodeURIComponent(path));
       if(state.notes_selected===path && rr && typeof rr.content==='string'){
         state.notes_content = rr.content; state.notes_baseHash = rr.baseHash || null;
         const p = notesParseFrontmatter(rr.content);
-        state.notes_draftBlock = p.block; state.notes_draftBody = p.body;
+        // an empty draft, or one that already matches disk, needs no merge markers
+        const needsMerge = !!draft.trim() && draft.trim() !== p.body.trim();
+        state.notes_draftBlock = p.block;
+        state.notes_draftBody = needsMerge
+          ? p.body.replace(/\s+$/,'') + NOTES_MERGE_MARK + draft.replace(/^\s+/,'')
+          : p.body;
         state.notes_saveConflict = false; notesRenderAll();
+        announce(needsMerge ? 'disk version added above your unsaved text' : 'disk version loaded');
       }
     }catch(e){}
   };
@@ -538,7 +583,18 @@ async function renderNotes(){
     // Open the requested note directly — don't require it to be in the loaded list
     // (a deep-linked note can be beyond the 5000-item cap); notesLoadNote fetches
     // it by path and surfaces its own error if it truly can't be read.
-    if(target && target !== state.notes_selected) await notesLoadNote(target);
+    //
+    // But ask first, exactly as a tree click does. Leaving Notes mid-edit keeps
+    // notes_editing set, so coming back via an Ask source chip / Brain Map node /
+    // Health jump ran notesLoadNote straight away — it clears notes_editing and
+    // replaces the content, so the half-written draft was silently unreachable.
+    // Same guard as notesWireTree, for the same reason, in the one other place a
+    // note switch is initiated. A save in flight owns notes_content until it
+    // resolves, so a deep link waits rather than racing it.
+    const mayOpen = target && target !== state.notes_selected && !state.notes_saving
+      && (!state.notes_editing || confirm(t('Discard your unsaved changes to this note?','هل تريد تجاهل تغييراتك غير المحفوظة؟')));
+    if(mayOpen) await notesLoadNote(target);
+    else if(state.notes_flash === target) state.notes_flash = null; // don't flash a note we didn't open
   }
   if(state.notes_listError && !(state.notes_items||[]).length){
     scr.innerHTML = '<div style="margin-bottom:20px;animation:rise .4s ease both"><h1 style="font-family:var(--pixel);font-weight:700;font-size:42px;line-height:1.02">notes.</h1>'

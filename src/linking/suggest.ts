@@ -152,6 +152,22 @@ export function buildLinkerIndex(
       c.set(target, (c.get(target) || 0) + 1);
     }
   }
+  // Bucket the historical phrases by first word, and remember their word sets, ONCE
+  // — before the per-note loop, not inside it. The old prefilter lived inside the
+  // loop, so every note still walked the WHOLE phraseStats map (plus a regex per
+  // phrase) to decide what to skip: O(notes × distinct linked phrases) of straight
+  // synchronous CPU on the server's only thread. On a real vault that is seconds of
+  // dead air — the dashboard stops answering while a link preview builds its index.
+  // Bucketed, a note only ever touches phrases whose first word it actually contains.
+  const phrasesByFirstWord = new Map<string, { phrase: string; words: string[]; stat: { mentions: number; linked: number } }[]>();
+  for (const [phrase, stat] of phraseStats) {
+    if (phrase.length < 4) continue;
+    const words = surfaceTokens(phrase);
+    if (!words.length) continue;
+    const arr = phrasesByFirstWord.get(words[0]);
+    if (arr) arr.push({ phrase, words, stat });
+    else phrasesByFirstWord.set(words[0], [{ phrase, words, stat }]);
+  }
   // unlinked mentions: count occurrences of every known phrase (plain scan)
   for (const n of notes) {
     const lower = n.text.toLowerCase();
@@ -161,20 +177,31 @@ export function buildLinkerIndex(
     // it mixed this note's occurrence count with every note's link count.
     const linkSpans: [number, number][] = [];
     for (const m of n.text.matchAll(/\[\[[^\]]*\]\]/g)) linkSpans.push([m.index!, m.index! + m[0].length]);
-    // Only test phrases whose FIRST word actually occurs in this note — skips an
-    // indexOf scan of every historical phrase against every note (the O(notes ×
-    // phrases) shape) for the common case where the phrase isn't present at all.
     const present = new Set(lower.match(/[\p{L}\p{N}]+/gu) ?? []);
-    for (const [phrase, s] of phraseStats) {
-      if (phrase.length < 4) continue;
-      const firstWord = phrase.match(/[\p{L}\p{N}]+/u)?.[0];
-      if (!firstWord || !present.has(firstWord)) continue;
-      let pos = -1,
-        c = 0;
-      while (c < 20 && (pos = lower.indexOf(phrase, pos + 1)) !== -1) {
-        if (boundaryOk(lower, pos, pos + phrase.length) && !inSpan(linkSpans, pos)) c++;
+    // Drive the scan from the note's OWN words: each pulls just its bucket, and a
+    // phrase has exactly one first word, so it is still tested at most once per note
+    // — identical counts, without the per-note-per-phrase walk.
+    for (const w of present) {
+      const bucket = phrasesByFirstWord.get(w);
+      if (!bucket) continue;
+      for (const { phrase, words, stat } of bucket) {
+        // Every word of a multi-word phrase must occur in the note too. A counted
+        // occurrence is boundary-checked at both ends, so its words ARE note tokens
+        // — this can only skip scans that would have counted zero. Without it, one
+        // common first word ("acme", "the") drags every phrase under it into a
+        // full-text indexOf on every note, which is the same quadratic stall.
+        let all = true;
+        for (let k = 1; k < words.length; k++) {
+          if (!present.has(words[k])) { all = false; break; }
+        }
+        if (!all) continue;
+        let pos = -1,
+          c = 0;
+        while (c < 20 && (pos = lower.indexOf(phrase, pos + 1)) !== -1) {
+          if (boundaryOk(lower, pos, pos + phrase.length) && !inSpan(linkSpans, pos)) c++;
+        }
+        stat.mentions += c; // c already excludes linked occurrences (they're inside linkSpans)
       }
-      s.mentions += c; // c already excludes linked occurrences (they're inside linkSpans)
     }
   }
   return { byFirstToken, phraseStats, commonness };

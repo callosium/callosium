@@ -12,6 +12,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import path from 'node:path';
 import type { AgentIdentity, AgentsRegistry } from '../core/types.ts';
 import type { Vault } from '../core/vault.ts';
+import { restrictToOwner } from '../util/secrets.ts';
 
 export const AGENTS_REL = 'System/agents.json';
 
@@ -90,6 +91,14 @@ export async function loadAgents(vault: Vault): Promise<AgentsRegistry> {
 
 export async function saveAgents(vault: Vault, reg: AgentsRegistry): Promise<void> {
   await vault.writeFile(AGENTS_REL, JSON.stringify(reg, null, 2));
+  // This file is the keyring: every agent's bearer token in the clear, and the
+  // HTTP transport authenticates by token alone. Written with node's default
+  // mode it lands at 0644 on POSIX, so any other local account could read it and
+  // then drive the loopback MCP endpoint as that agent — including into folders
+  // the owner scoped away from everyone. Scoping is enforced server-side
+  // precisely so it can't be talked around; a world-readable keyring walks
+  // around it instead.
+  await restrictToOwner(vault.abs(AGENTS_REL));
 }
 
 /** Serialize every read-modify-write of the token registry ACROSS the whole

@@ -10,6 +10,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { evaluateEntitlement, type Entitlement, type SignedLicense, type Tier, hasTier } from './license.ts';
+import { restrictToOwner, restrictDirToOwner } from '../util/secrets.ts';
 
 export { hasTier, type Tier, type Entitlement } from './license.ts';
 
@@ -39,7 +40,11 @@ export async function saveLicense(license: SignedLicense, file = licensePath()):
   await fs.mkdir(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
   await fs.writeFile(tmp, JSON.stringify(license, null, 2), 'utf8');
+  // Tighten the TEMP file, before the rename — chmod'ing after would leave a
+  // window where the final path is world-readable.
+  await restrictToOwner(tmp);
   await fs.rename(tmp, file);
+  await restrictDirToOwner(path.dirname(file));
 }
 
 /** Remove a stored license (deactivation / sign-out) — back to free. */

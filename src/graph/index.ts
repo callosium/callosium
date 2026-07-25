@@ -85,12 +85,11 @@ export async function buildGraph(vault: Vault, shared?: SharedTexts): Promise<Bu
     notes.push({ note: parseNote(f, raw), hash: Vault.contentHash(raw) });
   }
 
-  const { nameMap, collisions, sepMap } = buildNameMap(
-    notes.map((n) => ({
-      path: n.note.path,
-      aliases: Array.isArray(n.note.frontmatter.aliases) ? n.note.frontmatter.aliases.map(String) : [],
-    })),
-  );
+  const nameInputs = notes.map((n) => ({
+    path: n.note.path,
+    aliases: Array.isArray(n.note.frontmatter.aliases) ? n.note.frontmatter.aliases.map(String) : [],
+  }));
+  const { nameMap, collisions, sepMap } = buildNameMap(nameInputs);
 
   // Index previous edges by source note, and file existence as a Set, ONCE —
   // the old per-note `stale.edges.filter(...)` + `files.includes(...)` was
@@ -109,24 +108,61 @@ export async function buildGraph(vault: Vault, shared?: SharedTexts): Promise<Bu
   const noteHashes: Record<string, string> = {};
   let extracted = 0,
     reused = 0;
+  const keyOf = (s: string) => s.normalize('NFC').toLowerCase().trim();
+  const sepKeyOf = (s: string) => keyOf(s).replace(/\\+$/, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
   // Would a link with this raw text resolve under the CURRENT name map? (mirrors
   // resolveEdges: exact key → .md-stripped → separator-normalized unambiguous.)
-  const nameOf = (p: string) => p.split('/').pop()!.replace(/\.md$/, '').toLowerCase();
   const resolvesNow = (toText: string): string | undefined => {
-    const key = toText.normalize('NFC').toLowerCase().trim();
-    const sk = key.replace(/\\+$/, '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
-    return nameMap.get(key) ?? nameMap.get(key.replace(/\.md$/, '')) ?? sepMap.get(sk);
+    const key = keyOf(toText);
+    return nameMap.get(key) ?? nameMap.get(key.replace(/\.md$/, '')) ?? sepMap.get(sepKeyOf(toText));
+  };
+
+  // Every name a note CLAIMS — basename + aliases. A RESOLVED edge stores only the
+  // target PATH, never the link text that produced it, so the reuse test below
+  // cannot simply re-resolve that text. It asks the equivalent question instead:
+  // does every name this target owns still point back at it? Any text that reached
+  // the target went through one of them (or through a path form, checked too).
+  const namesOf = new Map<string, string[]>();
+  for (const n of nameInputs) namesOf.set(n.path, [n.path.split('/').pop()!.replace(/\.md$/, ''), ...n.aliases]);
+  /** Is a previously-resolved edge to `to` still guaranteed to land on `to`?
+   *  The old test checked only the target's BASENAME — a lane a link that resolved
+   *  by ALIAS or by separator-folding never travelled. Adding "JD.md" beside a
+   *  "Jane Doe" note aliased JD (or "jane-doe.md" beside "Jane Doe") left every
+   *  [[JD]] / [[jane-doe]] edge silently pointing at the OLD note until some
+   *  unrelated edit forced that source note to re-extract. Both lanes are checked
+   *  now; a name-colliding target simply never qualifies for reuse, which costs a
+   *  re-extract but can't be wrong. Memoized — a hub note is the target of
+   *  thousands of edges and the answer is a property of the target alone. */
+  const stableTargets = new Map<string, boolean>();
+  const computeStable = (to: string): boolean => {
+    const names = namesOf.get(to);
+    if (!names) return false; // target left the vault
+    // Path forms (`[[Folder/Note]]`, `[[Note.md]]`) resolve through nameMap too.
+    const full = keyOf(to);
+    if (nameMap.get(full) !== to || nameMap.get(full.replace(/\.md$/, '')) !== to) return false;
+    for (const name of names) {
+      const k = keyOf(name);
+      if (!k) continue;
+      if (nameMap.get(k) !== to || sepMap.get(sepKeyOf(name)) !== to) return false;
+    }
+    return true;
+  };
+  const targetStable = (to: string): boolean => {
+    let ok = stableTargets.get(to);
+    if (ok === undefined) stableTargets.set(to, (ok = computeStable(to)));
+    return ok;
   };
   for (const { note, hash } of notes) {
     noteHashes[note.path] = hash;
     // Incremental: reuse an unchanged note's edges ONLY when re-extraction would
-    // produce the identical resolution. A RESOLVED edge is stable only if the
-    // target's basename still maps to that exact path (else a newly-added shallower
-    // same-named note re-points it); an UNRESOLVED (broken) edge is stable only if
-    // its target STILL can't resolve (else a note was created that should link it).
+    // produce the identical resolution. A RESOLVED edge is stable only if every name
+    // its target owns still maps to that exact path (else a newly-added note stole
+    // the name the link actually used and the edge must re-point); an UNRESOLVED
+    // (broken) edge is stable only if its target STILL can't resolve (else a note
+    // was created that should link it).
     if (stale && stale.noteHashes[note.path] === hash) {
       const old = staleByFrom.get(note.path) ?? [];
-      const stillValid = old.every((e) => (e.unresolved ? !resolvesNow(e.to) : nameMap.get(nameOf(e.to)) === e.to));
+      const stillValid = old.every((e) => (e.unresolved ? !resolvesNow(e.to) : targetStable(e.to)));
       if (stillValid) {
         edges.push(...old);
         reused++;

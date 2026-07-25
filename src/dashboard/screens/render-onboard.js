@@ -61,6 +61,12 @@ function ob_startBrain(){
         P.push({px,py,z,lum,cal,sec,sw:sw2,phase:ob_hash(P.length)*6.28});
       }
       pts=P; state.ob_pts=P;
+      // /assets/brain.png lands AFTER the single synchronous draw() below. With the
+      // rotation interval running that self-corrects within 85ms — but under
+      // reduce-motion there IS no interval, so the hero sat on the "waking the
+      // cortex…" placeholder forever and the signature brain never appeared at all.
+      // Paint the settled frame the moment the points exist.
+      draw();
     };
     img.onerror=()=>{ /* offline / missing asset — the caption still welcomes */ };
     img.src='/assets/brain.png';

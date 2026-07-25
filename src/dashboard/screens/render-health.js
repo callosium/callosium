@@ -16,6 +16,9 @@ const HEALTH_SEV_COL = { warn: 'var(--amber)', notice: 'var(--dust)', ok: 'var(-
 const HEALTH_SEV_RANK = { warn: 0, notice: 1, ok: 2 };
 const HEALTH_BADGE = { warn: 'needs you', notice: 'worth a look', ok: 'all good' };
 const healthPlural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+// server errors arrive both ways ("Connect a brain first." vs "request failed (500)"),
+// and these get glued in front of another sentence — don't run the two together.
+const healthErrText = e => { const s = String(e || '').trim(); return /[.!?]$/.test(s) ? s : (s + '.'); };
 
 // friendly card definitions, grouped by kind. Each group aggregates one or more
 // engine finding kinds; count comes from byKind, example paths from findings[].
@@ -89,7 +92,10 @@ async function healthRunCheck(){
   state.health_checking = true;
   busyCursor(true); // busy arrow for the run; cleared in the settle below
   state.health_pct = 0;
-  state.health_linkPreview = null; state.health_linking = null;  // stale after a re-check
+  // stale after a re-check — including a failed cleanup panel, which now survives
+  // its own flow (it used to be cleared unconditionally) and would otherwise sit
+  // there contradicting the fresh results behind it.
+  state.health_linkPreview = null; state.health_linking = null; state.health_cleanup = null;
   state.health_expanded = state.health_expanded || {};
   healthPaint(); // show the "running a full check" panel
   announce('running a full check…');
@@ -453,6 +459,14 @@ function healthConnectHTML(){
   if(state.health_linking === 'applying') return `<div style="margin-top:12px;border-top:1px solid var(--edge);padding-top:12px;font-family:var(--mono);font-size:13px;color:var(--dust)"><span style="color:var(--synapse)">›</span> adding links…</div>`;
   const pv = state.health_linkPreview; if(!pv) return '';
   const cancel = `<button data-hconnect-cancel="1" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;border:1px solid var(--edge2);color:var(--dust);background:transparent;padding:8px 14px;border-radius:0;cursor:pointer">close</button>`;
+  // A failed preview/apply reads as a FAILURE, never as a verdict. It used to
+  // collapse into the zero-result shape below, so a 500 rendered "nothing else
+  // mentions these by name" — a confident factual claim the app never established —
+  // right next to a button that permanently dismisses every real orphan.
+  if(pv.failed){
+    const retry = `<button data-hconnect="1" style="font-family:var(--mono);font-size:12px;letter-spacing:.03em;text-transform:uppercase;border:1px solid var(--synapse);color:var(--synapse-ink);background:transparent;padding:8px 14px;border-radius:0;cursor:pointer">try again</button>`;
+    return `<div role="alert" style="margin-top:12px;border-top:1px solid var(--edge);padding-top:12px;font-family:var(--mono);font-size:13px;color:var(--amber);line-height:1.6"><span style="margin-right:6px">⚠</span>${esc(pv.failed)}<div style="display:flex;gap:9px;margin-top:11px">${retry}${cancel}</div></div>`;
+  }
   if(!pv.links){
     // Nothing else in the vault mentions these notes by name, so there's nothing to
     // auto-link — which means they're legitimately standalone, not a problem. Offer
@@ -481,16 +495,37 @@ async function healthConnectPreview(){
   state.health_linking = 'preview'; state.health_linkPreview = null;
   if(state.health_expanded) state.health_expanded['orphans'] = false;  // preview replaces the list
   healthPaint();
-  try{ const r = await post('/api/link/preview', {}); state.health_linkPreview = (r && !r.error) ? r : { notes:0, links:0, orphanTotal:0, orphansConnected:0, sample:[] }; }
-  catch(e){ state.health_linkPreview = { notes:0, links:0, orphanTotal:0, orphansConnected:0, sample:[] }; }
+  // post() resolves on EVERY status and marks a non-2xx with .error, so a failure
+  // and a genuinely empty plan arrive as different objects — keep them different.
+  // Folding the failure into { links: 0 } is what turned a 500 into the "nothing
+  // to auto-link" verdict plus a dismiss-every-orphan button.
+  try{
+    const r = await post('/api/link/preview', {});
+    state.health_linkPreview = (r && r.error)
+      ? { failed: 'couldn’t work out what to connect — ' + healthErrText(r.error) + ' Nothing was changed.' }
+      : (r || { notes:0, links:0, orphanTotal:0, orphansConnected:0, sample:[] });
+  }
+  catch(e){ state.health_linkPreview = { failed: 'couldn’t work out what to connect — the local engine didn’t answer. Nothing was changed.' }; }
   state.health_linking = null;
   if(state.screen === 'health') healthPaint();
 }
 async function healthConnectApply(){
   if(state.health_linking) return;
   state.health_linking = 'applying'; healthPaint();
-  try{ await post('/api/link/apply', {}); }catch(e){}
-  state.health_linking = null; state.health_linkPreview = null;
+  // This POST edits notes. Throwing its response away reported a server-side
+  // failure as success: the panel closed, the re-check ran, and the unchanged
+  // orphan count looked like the fix simply hadn't helped.
+  let err = null;
+  try{ const r = await post('/api/link/apply', {}); if(r && r.error) err = r.error; }
+  catch(e){ err = 'the local engine didn’t answer.'; }
+  state.health_linking = null;
+  if(err){
+    state.health_linkPreview = { failed: 'the links didn’t finish applying — ' + healthErrText(err) + ' Some may already be in place; every edited note is backed up in ~/.callosium/backups.' };
+    announce('couldn’t add the links');
+    if(state.screen === 'health') healthPaint();
+    return;
+  }
+  state.health_linkPreview = null;
   healthRunCheck();   // re-check: the orphan count should drop
 }
 function healthConnectCancel(){ state.health_linking = null; state.health_linkPreview = null; if(state.screen === 'health') healthPaint(); }
@@ -501,6 +536,12 @@ function healthCleanupHTML(){
   const cancel = `<button data-hclean-cancel="1" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;border:1px solid var(--edge2);color:var(--dust);background:transparent;padding:8px 14px;border-radius:0;cursor:pointer">close</button>`;
   if(c.phase === 'preview') return `<div style="margin-top:12px;border-top:1px solid var(--edge);padding-top:12px;font-family:var(--mono);font-size:13px;color:var(--dust)"><span style="color:var(--synapse)">›</span> finding exact-duplicate copies that are safe to remove…</div>`;
   if(c.phase === 'applying') return `<div style="margin-top:12px;border-top:1px solid var(--edge);padding-top:12px;font-family:var(--mono);font-size:13px;color:var(--dust)"><span style="color:var(--synapse)">›</span> backing up, then removing the copies…</div>`;
+  // same honesty rule as the connect flow: a failed preview or apply is a failure,
+  // not the "nothing here is an exact duplicate" verdict the zero-result shape renders.
+  if(c.phase === 'failed'){
+    const retry = `<button data-hclean="${esc(c.kind||'')}" style="font-family:var(--mono);font-size:12px;letter-spacing:.03em;text-transform:uppercase;border:1px solid var(--synapse);color:var(--synapse-ink);background:transparent;padding:8px 14px;border-radius:0;cursor:pointer">try again</button>`;
+    return `<div role="alert" style="margin-top:12px;border-top:1px solid var(--edge);padding-top:12px;font-family:var(--mono);font-size:13px;color:var(--amber);line-height:1.6"><span style="margin-right:6px">⚠</span>${esc(c.error||'')}<div style="display:flex;gap:9px;margin-top:11px">${retry}${cancel}</div></div>`;
+  }
   const d = c.data || { groups:[], files:0, bytes:0, diverged:[] };
   // Conflict copies that DIVERGED from their original are never auto-deleted (they hold edits the
   // original doesn't) — tell the owner so they can merge them by hand instead of assuming they're gone.
@@ -527,18 +568,37 @@ function healthCleanupHTML(){
     </div>`;
 }
 async function healthCleanPreview(kind){
-  if(state.health_cleanup) return;
+  // a FAILED flow stays on screen with a "try again" button, so it must not read
+  // as "a cleanup is already running" when the owner taps that button.
+  if(state.health_cleanup && state.health_cleanup.phase !== 'failed') return;
   state.health_cleanup = { kind, phase:'preview', data:null };
   if(state.health_expanded) state.health_expanded[kind==='sync'?'sync':'dupes'] = false;
   healthPaint();
-  try{ const r = await post('/api/cleanup/preview?kind='+encodeURIComponent(kind), {}); state.health_cleanup = { kind, phase:'ready', data:(r && !r.error) ? r : { groups:[], files:0, bytes:0 } }; }
-  catch(e){ state.health_cleanup = { kind, phase:'ready', data:{ groups:[], files:0, bytes:0 } }; }
+  try{
+    const r = await post('/api/cleanup/preview?kind='+encodeURIComponent(kind), {});
+    state.health_cleanup = (r && r.error)
+      ? { kind, phase:'failed', error: 'couldn’t look for duplicate copies — ' + healthErrText(r.error) + ' Nothing was removed.' }
+      : { kind, phase:'ready', data: r || { groups:[], files:0, bytes:0 } };
+  }
+  catch(e){ state.health_cleanup = { kind, phase:'failed', error: 'couldn’t look for duplicate copies — the local engine didn’t answer. Nothing was removed.' }; }
   if(state.screen === 'health') healthPaint();
 }
 async function healthCleanApply(kind){
   if(!state.health_cleanup) return;
+  const k = kind || state.health_cleanup.kind;
   state.health_cleanup.phase = 'applying'; healthPaint();
-  try{ await post('/api/cleanup/apply?kind='+encodeURIComponent(kind||''), {}); }catch(e){}
+  // This POST DELETES files. Discarding its response reported a server-side
+  // failure as success — the panel closed and the re-check's unchanged duplicate
+  // count was the only (silent) hint that nothing had happened.
+  let err = null;
+  try{ const r = await post('/api/cleanup/apply?kind='+encodeURIComponent(k||''), {}); if(r && r.error) err = r.error; }
+  catch(e){ err = 'the local engine didn’t answer.'; }
+  if(err){
+    state.health_cleanup = { kind:k, phase:'failed', error: 'the cleanup didn’t finish — ' + healthErrText(err) + ' Some copies may already be gone; every removed file is backed up in ~/.callosium/backups.' };
+    announce('cleanup didn’t finish');
+    if(state.screen === 'health') healthPaint();
+    return;
+  }
   state.health_cleanup = null;
   healthRunCheck();   // re-check: the duplicate/conflict count should drop
 }

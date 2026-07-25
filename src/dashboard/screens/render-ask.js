@@ -215,5 +215,10 @@ async function akSend(q){
     });
     announce('not in your brain');
   }
-  renderAsk();
+  // A slow recall must not paint Ask over whatever screen the user has since
+  // navigated to — recall can take seconds, and leaving for Notes/Brain Map mid-
+  // search used to have the Ask thread drop on top of it out of nowhere. The
+  // answer is already in state.ak_thread, so it's all there when they come back
+  // (akLoadSuggestions guards its own late render the same way).
+  if(state.screen==='ask') renderAsk();
 }

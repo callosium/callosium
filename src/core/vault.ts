@@ -25,6 +25,33 @@ let writeSeq = 0; // disambiguates concurrent temp-file names within a process
 // never grows unbounded. stdio (one Vault per process) is unaffected.
 const vaultLocks = new Map<string, Promise<void>>();
 
+/** Canonical write-lock key for an absolute path. Mirrors the canonicalization the
+ *  SCOPE layer already does (mcp/agents.ts normalizeRel + foldCase), because the
+ *  disk resolves all of these to ONE file while plain case-folding left them as
+ *  DIFFERENT strings — and two writers holding different lock keys for the same
+ *  note interleave their read-modify-write and lose an update, the exact failure
+ *  this lock exists to prevent:
+ *    • Unicode form — macOS/iCloud hand back decomposed (NFD) names, so an agent's
+ *      composed "Café.md" and a directory-walk's NFD "Café.md" never matched.
+ *    • win32/darwin trailing dots and spaces — "Log.md." and "Log.md " both open
+ *      Log.md, so an agent that pipelines two appends with a stray trailing space
+ *      ran both unlocked against each other.
+ *  Over-canonicalizing a LOCK key is harmless (at worst two genuinely distinct
+ *  files serialize needlessly); under-canonicalizing silently drops writes — so
+ *  we fold the same way the scope check does. normalizeRel can't just be called
+ *  here: it hard-denies ABSOLUTE paths, and this key must carry the vault root so
+ *  two brains never collide in the module-level map. Linux is left byte-exact —
+ *  there NFC/NFD and "Log.md " really are different files. */
+function lockKey(canonAbs: string): string {
+  if (process.platform === 'linux') return canonAbs;
+  return canonAbs
+    .normalize('NFC')
+    .split(/[\\/]/)
+    .map((seg) => seg.replace(/[. ]+$/, ''))
+    .join('/')
+    .toLowerCase();
+}
+
 export class Vault {
   readonly root: string;
   #realRoot: string | null = null;
@@ -104,7 +131,7 @@ export class Vault {
     } catch {
       canon = rel;
     }
-    const key = process.platform === 'linux' ? canon : canon.toLowerCase();
+    const key = lockKey(canon);
     const prev = vaultLocks.get(key) ?? Promise.resolve();
     let release!: () => void;
     const chained = prev.then(() => new Promise<void>((r) => (release = r)));

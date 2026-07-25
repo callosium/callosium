@@ -94,6 +94,7 @@ function setBrain(p: string): void {
   cacheBuiltToken = '';
   cacheGen = -1;
   graphLoadedOnce = false; // the NEW brain should trust ITS persisted graph on first load
+  graphBodyCache = null; // the serialized map body belongs to the OLD brain's nodes
   lastRevalidate = 0;
   lastExternalEdits = [];
   persistBrain(p);
@@ -133,7 +134,12 @@ function clampInt(raw: string | null, def: number, max: number, min = 1): number
 // `build` is the graph BuildResult when this load went through buildGraph
 // (every rebuild, and a first load with no persisted graph). It is handed to
 // the health check so it never runs its own buildGraph pass.
-interface Loaded { texts: VaultTexts; graph: GraphIndex; emb: EmbeddingIndex | null; build: BuildResult | null; }
+// `token` is the vault freshness token THIS snapshot was read at. Anything that
+// caches a body DERIVED from a load (the map's ETag + serialized body) must key on
+// it rather than on the global cacheBuiltToken: loadAll can hand back a snapshot it
+// deliberately did NOT publish (a brain switch or a write landed mid-load), and
+// cacheBuiltToken then describes a different snapshot entirely.
+interface Loaded { texts: VaultTexts; graph: GraphIndex; emb: EmbeddingIndex | null; build: BuildResult | null; token: string; }
 let cache: Loaded | null = null;
 // Last embedding-cache load error (corrupt/torn/oversized cache), surfaced to the
 // overview payload so the owner SEES "semantic off — re-index" instead of it
@@ -158,12 +164,30 @@ let graphLoadedOnce = false; // after the first load, rebuilds go through buildG
 // alive at once, which is exactly the duplication sharing the cache removes.
 // Pinned to brainGeneration so a load started for the PREVIOUS brain is never
 // handed to a caller running under the new one.
-let loadInFlight: { gen: number; p: Promise<Loaded> } | null = null;
+// Pinned to cacheEpoch too, so a load started BEFORE the last invalidation is not
+// joinable by a caller that asks after it.
+let loadInFlight: { gen: number; epoch: number; p: Promise<Loaded> } | null = null;
 function loadAll(): Promise<Loaded> {
   const gen = brainGeneration;
-  if (loadInFlight && loadInFlight.gen === gen) return loadInFlight.p;
-  const p = loadOnce(gen, cacheEpoch);
-  loadInFlight = { gen, p };
+  const epoch = cacheEpoch;
+  // Pin the brain HERE, synchronously, and hand it to the load. It used to read
+  // brainPath itself, which was equivalent only while the load always started in
+  // the same tick; now that a superseded load can be queued (below), reading it
+  // later would open whatever brain is connected by then and answer a request that
+  // began on the previous one — the leak the generation guard exists to prevent.
+  const brain = brainPath!;
+  if (loadInFlight && loadInFlight.gen === gen && loadInFlight.epoch === epoch) return loadInFlight.p;
+  // A pre-invalidation load isn't joinable, but it is still RUNNING and still holds
+  // a whole brain (note bodies + graph + the Float32 vector matrix). Starting ours
+  // alongside it is exactly the parallel duplication this single flight exists to
+  // cap: an agent's write→read→write loop invalidates on every write, so N loads,
+  // N copies, would pile up. Queue behind it instead of racing it — same freshness
+  // guarantee (we still start our own, post-write load), one brain resident at a
+  // time. dropCache used to null the slot outright, which removed the bound.
+  const prev = loadInFlight;
+  const start = () => loadOnce(gen, epoch, brain);
+  const p = prev ? prev.p.then(start, start) : start();
+  loadInFlight = { gen, epoch, p };
   // Release the slot once it settles — resolved OR rejected — so a failed load
   // (brain folder gone, a transient cloud-sync read error) is retried on the next
   // call instead of being pinned as a permanent rejection. Guarded on identity so
@@ -172,13 +196,13 @@ function loadAll(): Promise<Loaded> {
   p.then(release, release);
   return p;
 }
-async function loadOnce(gen: number, epoch: number): Promise<Loaded> {
-  // The brain + generation are pinned for the WHOLE load (`gen` comes from the
+async function loadOnce(gen: number, epoch: number, brain: string): Promise<Loaded> {
+  // The brain + generation are pinned for the WHOLE load (both come from the
   // caller, in the same synchronous step it read brainGeneration). If the owner
   // switches brains while the (slow) load below is in flight, we must NOT store
   // this old-brain result under the new brain's cache — the generation check at
   // commit time catches that (P2 #1).
-  const vault = Vault.open(brainPath!);
+  const vault = Vault.open(brain);
   // Serve the cache, but revalidate against disk at most every 2s: an MCP agent
   // (a separate process) can edit notes without ever calling dropCache(), so a
   // pure in-memory cache would serve — and let saves overwrite — stale content.
@@ -189,7 +213,16 @@ async function loadOnce(gen: number, epoch: number): Promise<Loaded> {
     const now = Date.now();
     if (now - lastRevalidate < 2000) return cache;
     lastRevalidate = now;
-    if ((await vault.freshnessToken()) === cacheBuiltToken) return cache;
+    const fresh = (await vault.freshnessToken()) === cacheBuiltToken;
+    // Re-read `cache` AFTER the await before handing it back. A concurrent
+    // dropCache() — an MCP write, a pair/scope change, a re-index — can null it
+    // while the token scan is in flight, and none of those need move the freshness
+    // token, so `fresh` can still be true over a cache that is now null. TypeScript's
+    // narrowing from the `if (cache && …)` above does NOT survive an await, so this
+    // returned null typed as Loaded and every caller's `const { texts } = await
+    // loadAll()` threw "Cannot destructure property 'texts' of null" — a 500 on
+    // whichever screen happened to be polling when the write landed.
+    if (fresh && cache && cacheGen === gen) return cache;
     // Only invalidate if the cache STILL belongs to my generation. During the
     // freshnessToken await above a setBrain(B) + a fresh loadAll(B) could have
     // committed brain B's cache under a new generation; nulling it here (my token
@@ -218,7 +251,7 @@ async function loadOnce(gen: number, epoch: number): Promise<Loaded> {
     : ((await loadGraph(vault)) ?? (build = await buildGraph(vault, texts)).index);
   graphLoadedOnce = true;
   const emb = await loadEmbeddings(vault);
-  const loaded: Loaded = { texts, graph, emb, build };
+  const loaded: Loaded = { texts, graph, emb, build, token: builtToken };
   // If the owner switched brains WHILE this load was in flight, `loaded` is the
   // OLD brain's data. Hand it back to our caller (whose request began under the
   // old brain) but do NOT poison the shared cache under the new generation — the
@@ -276,19 +309,28 @@ let reportCache: Awaited<ReturnType<typeof brainCheck>> | null = null;
 async function cachedReport(vault: Vault): Promise<Awaited<ReturnType<typeof brainCheck>>> {
   if (reportCache) return reportCache;
   const gen = brainGeneration;
+  // Epoch as well as generation. dropCache() nulls reportCache and bumps ONLY the
+  // epoch, so a check that started before a write still matched the generation and
+  // published its PRE-write report — which then stuck until the next invalidation.
+  // The owner would fix a broken link, watch the re-check run, and see the finding
+  // still listed. Same load-then-publish recheck loadOnce does for the texts/graph.
+  const epoch = cacheEpoch;
   const { texts, build } = await loadAll();
   const report = await brainCheck(vault, { texts, build });
-  // Don't cache a report computed for a brain we've since switched away from (P2 #1).
-  if (gen === brainGeneration) reportCache = report;
+  // Don't cache a report computed for a brain we've since switched away from (P2 #1)
+  // or for a vault state a write has since superseded.
+  if (gen === brainGeneration && epoch === cacheEpoch) reportCache = report;
   return report;
 }
-// Drop the loaded brain and everything derived from it. Also drops the in-flight
-// load: a load that STARTED before this write must not be handed to a caller that
-// asks after it (an MCP agent that writes then immediately recalls has to see its
-// own write). That load still completes and may commit its pre-write snapshot, but
-// under its pre-write freshness token — so the next revalidation reloads, exactly
-// as for any mid-load external write (see the builtToken note in loadOnce).
-const dropCache = () => { cache = null; reportCache = null; loadInFlight = null; cacheEpoch++; };
+// Drop the loaded brain and everything derived from it. Bumping the epoch is what
+// detaches the in-flight load: a load that STARTED before this write must not be
+// handed to a caller that asks after it (an MCP agent that writes then immediately
+// recalls has to see its own write), and the epoch guard at the end of loadOnce also
+// stops it publishing its pre-write snapshot. It used to null the slot outright,
+// which additionally threw away the single-flight RAM bound — the next read then ran
+// a second full load ALONGSIDE the first. The slot now survives so loadAll can queue
+// behind it instead.
+const dropCache = () => { cache = null; reportCache = null; cacheEpoch++; };
 
 // ── One loaded brain per PROCESS ────────────────────────────────────────────────
 // The HTTP MCP endpoint (:4321/mcp, for URL+token clients like ChatGPT and Kimi) is
@@ -325,9 +367,9 @@ function mcpBrainSource(): BrainSource {
   // an existsSync, and this runs on every tool call, so the stat would be pure cost.
   // The request's own vault.root came from Vault.open on this very string, so the
   // resolved forms match exactly whenever it is the same brain.
-  // Nothing awaits between this check and loadAll's own Vault.open(brainPath), and
-  // setBrain is synchronous, so the brain cannot change in between: whichever brain
-  // matches here is the one loadAll pins.
+  // Nothing awaits between this check and loadAll's own synchronous pin of brainPath,
+  // and setBrain is synchronous, so the brain cannot change in between: whichever
+  // brain matches here is the one loadAll pins.
   const onConnectedBrain = (vault: Vault): boolean => {
     if (!brainPath || path.resolve(brainPath) !== vault.root) return false;
     aside = null;
@@ -871,8 +913,14 @@ async function handleActivity(res: http.ServerResponse, limit: number) {
 let graphBodyCache: { token: string; body: string } | null = null;
 async function handleGraph(req: http.IncomingMessage, res: http.ServerResponse) {
   if (!brainPath) return send(res, 200, { nodes: [], edges: [] });
-  const { texts, graph } = await loadAll();
-  const etag = `"graph-${cacheBuiltToken}"`;
+  const { texts, graph, token } = await loadAll();
+  // Key BOTH the ETag and the body cache to the token of the snapshot we were just
+  // handed, never to the global cacheBuiltToken. loadAll can return a snapshot it
+  // chose not to publish (a write or a brain switch landed mid-load), and the global
+  // moves on its own besides — so the pair could disagree, and the browser would then
+  // cache THIS body under a token belonging to a DIFFERENT vault state. Its next
+  // If-None-Match would match, and the map would sit on a stale graph indefinitely.
+  const etag = `"graph-${token}"`;
   // no-cache (not no-store): the browser KEEPS the body and revalidates each
   // entry, and the revalidation is the cheap 304 path above.
   const headers = { etag, 'cache-control': 'no-cache' };
@@ -880,7 +928,7 @@ async function handleGraph(req: http.IncomingMessage, res: http.ServerResponse) 
     res.writeHead(304, headers);
     return res.end();
   }
-  if (!graphBodyCache || graphBodyCache.token !== cacheBuiltToken) {
+  if (!graphBodyCache || graphBodyCache.token !== token) {
     const idx = new Map<string, number>();
     // Exclude managed System/ files (Map.md is generated each re-index) — otherwise
     // Map.md renders as a phantom "Map" super-hub node wired to every MOC it links.
@@ -904,7 +952,7 @@ async function handleGraph(req: http.IncomingMessage, res: http.ServerResponse) 
       nodes[a].links++;
       nodes[b].links++;
     }
-    graphBodyCache = { token: cacheBuiltToken, body: JSON.stringify({ nodes, edges }) };
+    graphBodyCache = { token, body: JSON.stringify({ nodes, edges }) };
   }
   res.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(graphBodyCache.body), ...headers });
   res.end(graphBodyCache.body);
@@ -1193,7 +1241,13 @@ async function handleCleanupApply(res: http.ServerResponse, kind?: string | null
 async function handleNotes(res: http.ServerResponse, prefix: string, limit: number) {
   if (!brainPath) return send(res, 200, { items: [] });
   const { texts } = await loadAll();
-  const now = maxMtime(texts.mtimes) || Date.now();
+  // Wall clock, not the vault's newest mtime. Anchoring "ago" to the newest mtime
+  // made that comparison self-referential: the most recently edited note always
+  // reads "just now" and every other note is dated RELATIVE TO IT, so a brain last
+  // touched a month ago showed "just now / 2m ago / 5m ago" instead of the truth.
+  // max() with the newest mtime only to absorb a future-dated note (clock skew on a
+  // synced drive), exactly as the Activity feed does.
+  const now = Math.max(Date.now(), maxMtime(texts.mtimes) || 0);
   // Hide managed System/ files (Map.md, dismissed.json) from the Notes browser —
   // they aren't user notes; only surface them if the user explicitly browses System/.
   const base = texts.files.filter((f) => prefix.startsWith('System/') || !f.startsWith('System/'));

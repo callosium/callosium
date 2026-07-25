@@ -4,8 +4,9 @@
 //
 // Storage mirrors the version-history store: a JSONL file OUTSIDE the vault at
 // ~/.callosium/activity/<brainId>.jsonl (brainId is the same content-hash of the vault root the
-// history store and MCP server use, so writers and the dashboard reader agree). Writes are
-// best-effort and MUST NEVER throw or block the tool call that triggered them.
+// history store and MCP server use, so writers and the dashboard reader agree), plus one rotated
+// generation beside it (<brainId>.jsonl.1) — see maybeTrim. Writes are best-effort and MUST NEVER
+// throw or block the tool call that triggered them.
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -26,10 +27,15 @@ function activityFileFor(brainId: string): string {
   return path.join(root, `${brainId}.jsonl`);
 }
 
-const MAX_LINES = 5000; // soft cap; once exceeded we trim down to KEEP_LINES so the file can't grow unbounded
-const KEEP_LINES = 3000;
+const MAX_LINES = 5000; // once the live file exceeds this we rotate it, so neither file grows unbounded
+// `detail` is free text handed to us by the connected AI (the recall question, a move's source
+// path). MAX_LINES bounds how MANY entries we keep but says nothing about their size, so one agent
+// pasting a 200KB "question" wrote a single 200KB line — 5000 of those is a gigabyte, and the
+// dashboard feed reads the whole file. Cap what we store: the feed shows ~48 chars of it, and the
+// audit trail only needs enough to recognise what the agent did.
+const MAX_DETAIL = 500;
+const LOCK_STALE_MS = 30_000; // a rotate lock older than this belonged to a process that died
 let sinceTrimCheck = 0;
-let trimSeq = 0;
 
 // Append one action. Never throws — the audit trail is a convenience, not part of the write path.
 export async function logAction(brainId: string, entry: Omit<ActionEntry, 'at'> & { at?: number }): Promise<void> {
@@ -42,7 +48,7 @@ export async function logAction(brainId: string, entry: Omit<ActionEntry, 'at'> 
       agent: entry.agent,
       action: entry.action,
       ...(entry.path ? { path: entry.path } : {}),
-      ...(entry.detail ? { detail: entry.detail } : {}),
+      ...(entry.detail ? { detail: entry.detail.length > MAX_DETAIL ? entry.detail.slice(0, MAX_DETAIL) + '…' : entry.detail } : {}),
     };
     // O_APPEND: each line is written atomically enough that concurrent agent processes interleave
     // whole lines, not bytes; readActions() skips any line that doesn't parse, so a rare torn write
@@ -54,34 +60,76 @@ export async function logAction(brainId: string, entry: Omit<ActionEntry, 'at'> 
   }
 }
 
-// Amortized trim: only stat/rewrite occasionally (every ~200 appends per process) so logging stays
-// cheap. The rewrite is temp-file-then-rename (atomic) with a pid-unique temp name so two processes
-// trimming at once can't clobber each other.
+// The previous generation of the log. Only one is kept: the generation before that is what the
+// rotation's rename replaces, and that is what bounds the whole store.
+const rotatedFile = (file: string): string => `${file}.1`;
+
+// Amortized size check: only read/rotate occasionally (every ~200 appends per process) so logging
+// stays cheap.
+//
+// This used to trim by rewriting: read the file, slice the last KEEP_LINES into a temp, rename the
+// temp over the original. That silently DELETED every action another agent process appended between
+// the read and the rename — a measured 5-10ms hole per trim on a large file, and an audit trail
+// that quietly loses things that really happened is worse than one that's a bit too big. It also
+// tended to fail outright on Windows, where you can't rename over a file another writer has open,
+// so the log both lost entries on macOS/Linux and never got trimmed here.
+//
+// Rotation has no such hole: ONE atomic rename moves the whole live file aside, and nothing is ever
+// rewritten or dropped. Appends that open the file after it land in a fresh live file; the rare
+// straggler still holding a pre-rotation handle lands in the rotated file — which we keep, and
+// readActions() reads. Two files, each capped at MAX_LINES.
 async function maybeTrim(file: string): Promise<void> {
-  // Trim on the process's FIRST append (so a short-lived, low-volume MCP process still bounds a file
+  // Check on the process's FIRST append (so a short-lived, low-volume MCP process still bounds a file
   // that a long-running fleet grew huge) and every 200 appends after. sinceTrimCheck starts at 0, so
   // 0 % 200 === 0 fires on call #1.
   if (sinceTrimCheck++ % 200 !== 0) return;
+  // One rotator at a time, across processes: two rotating back-to-back would push a barely-started
+  // live file over the previous one, throwing away ~5000 real entries. Exclusive-create is the
+  // cheapest cross-platform mutex, and appenders never take it, so a rotation never blocks logging.
+  const lockFile = `${file}.lock`;
+  let lock: Awaited<ReturnType<typeof fs.promises.open>>;
+  try {
+    lock = await fs.promises.open(lockFile, 'wx');
+  } catch {
+    // Someone else is mid-rotation — or a process died holding the lock. Break a stale one, so a
+    // single crash can't disable rotation (and let the log grow forever) from then on.
+    try {
+      const st = await fs.promises.stat(lockFile);
+      if (Date.now() - st.mtimeMs > LOCK_STALE_MS) await fs.promises.unlink(lockFile);
+    } catch {
+      /* ignore */
+    }
+    return;
+  }
   try {
     const raw = await fs.promises.readFile(file, 'utf8');
-    const lines = raw.split('\n').filter(Boolean);
-    if (lines.length <= MAX_LINES) return;
-    // Unique temp per trim (pid + seq) so two trims in one process can't interleave into a shared
-    // temp; rename is atomic so a concurrent reader never sees a half-file.
-    const tmp = `${file}.tmp-${process.pid}-${trimSeq++}`;
-    await fs.promises.writeFile(tmp, lines.slice(-KEEP_LINES).join('\n') + '\n', 'utf8');
-    await fs.promises.rename(tmp, file);
+    let lines = 0;
+    for (let i = 0; i < raw.length; i++) if (raw.charCodeAt(i) === 10) lines++;
+    if (lines <= MAX_LINES) return;
+    await fs.promises.rename(file, rotatedFile(file));
   } catch {
     /* ignore */
+  } finally {
+    await lock.close().catch(() => {});
+    await fs.promises.unlink(lockFile).catch(() => {});
   }
 }
 
 // The most recent `limit` actions, newest-first.
 export async function readActions(brainId: string, limit = 30): Promise<ActionEntry[]> {
+  const file = activityFileFor(brainId);
+  const out: ActionEntry[] = [];
+  await collectNewestFirst(file, limit, out);
+  // A rotation leaves the live file nearly empty, so read on into the previous generation rather
+  // than showing the owner an "activity" feed that just went blank on them.
+  if (out.length < limit) await collectNewestFirst(rotatedFile(file), limit, out);
+  return out;
+}
+
+async function collectNewestFirst(file: string, limit: number, out: ActionEntry[]): Promise<void> {
   try {
-    const raw = await fs.promises.readFile(activityFileFor(brainId), 'utf8');
+    const raw = await fs.promises.readFile(file, 'utf8');
     const lines = raw.split('\n');
-    const out: ActionEntry[] = [];
     for (let i = lines.length - 1; i >= 0 && out.length < limit; i--) {
       const ln = lines[i];
       if (!ln) continue;
@@ -92,8 +140,7 @@ export async function readActions(brainId: string, limit = 30): Promise<ActionEn
         /* skip a torn/legacy line */
       }
     }
-    return out;
   } catch {
-    return [];
+    /* no such generation yet */
   }
 }

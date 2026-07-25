@@ -6,14 +6,21 @@
 // came through Callosium's MCP or from a direct external edit — is committed here, so every
 // version is restorable with a diff. "Your AI can't lose your memory."
 //
-// Why git (isomorphic-git): pure-JS, so no git binary to bundle in the portable; real diffs,
-// one-command restore, and delta compression for free.
+// Why git (isomorphic-git): pure-JS, so no git binary to bundle in the portable; real diffs and
+// one-command restore. Note it is NOT full git: it writes loose, individually-compressed objects
+// and never packs, so there is no delta compression and no gc — hence the retention pass below.
 //
 // Invariants:
 //  - Best-effort: a history failure must NEVER block a real write or a re-index. The public
 //    functions throw on hard git errors; callers wrap them in try/catch and swallow.
-//  - Serialized: isomorphic-git mutates a shared index, so all ops on one shadow repo run
-//    under a per-brain lock.
+//  - Serialized: isomorphic-git mutates a shared index, so all WRITES to one shadow repo run
+//    under a per-brain lock. Pure reads (listVersions) deliberately stay off that lock so a
+//    history walk can never stall the owner's own save.
+//  - Bounded: isomorphic-git writes LOOSE objects and never packs or gc's, so nothing reclaims a
+//    version once it exists. Retention (KEEP_VERSIONS) trims the tail on the write path.
+//  - Erasable: the store keeps copies of notes the vault no longer has — that's the whole point of
+//    a safety net, and the wrong answer when the owner wants something GONE. purgeNote/purgeBrain
+//    are the erase paths (see the PURGE section at the bottom).
 
 import git from 'isomorphic-git';
 import * as fs from 'node:fs';
@@ -39,11 +46,42 @@ export interface ExternalChange {
 const AUTHOR_EMAIL = 'history@callosium.local';
 const SKIP_DIRS = new Set(['.git', '.obsidian', '.trash', 'node_modules', '.callosium-cache']);
 
-function gitdirFor(brainId: string): string {
+// Retention. isomorphic-git only ever writes loose objects — it never packs and has no gc — so
+// every version is a full zlib copy of the note and NOTHING on any path ever reclaimed one: an
+// always-on brain grew its shadow store for the life of the install. We keep the newest
+// KEEP_VERSIONS commits and drop the tail (see pruneIfNeeded). CALLOSIUM_HISTORY_KEEP lets an owner
+// trade disk for depth, mirroring CALLOSIUM_HISTORY_ROOT.
+//
+// Both constants below are set from measurement, because the obvious settings are wrong in opposite
+// directions (measured 26 Jul 2026, Windows 11 / Node 24, 2KB notes):
+//
+//   cost of one version on disk .............. 918 bytes
+//   cost of one retention pass ............... 4.9s at KEEP=2000, and it scales LINEARLY with KEEP
+//                                              (the reachability sweep reads every object kept)
+//
+// So retention is cheap in disk and expensive in time — the reverse of the usual intuition. A small
+// KEEP saves nothing worth having (2,000 versions is 1.8MB) while throwing away history the product
+// exists to keep; and running the pass often makes it the dominant cost of writing a note (at one
+// pass per 100 commits it was ~75% of write throughput). Hence: keep a lot, prune rarely.
+const KEEP_VERSIONS = Math.max(50, Number(process.env.CALLOSIUM_HISTORY_KEEP) || 20_000);
+// Retention runs at BOOT (see ensureHistory) — that is the pass that actually keeps the store
+// bounded across the life of an install, and it is free because nothing is saving notes yet.
+// The write path only needs a backstop for a session that never restarts, so its threshold is set
+// high enough that a normal user never reaches it in one run: at 918 bytes a version, a session that
+// drifts this far over has still only added ~18MB. A note save must never wait on this.
+const PRUNE_EVERY_COMMITS = 20_000;
+// Cap on what one timeline request walks/returns. A History panel past a few hundred entries is
+// unusable anyway, and the cap keeps the response bounded no matter how hot the note is.
+const MAX_VERSIONS_LISTED = 500;
+
+function historyRoot(): string {
   // CALLOSIUM_HISTORY_ROOT relocates the version store (tests isolate it; owners can move it
   // off a synced drive). Defaults to ~/.callosium/history.
-  const root = process.env.CALLOSIUM_HISTORY_ROOT || path.join(os.homedir(), '.callosium', 'history');
-  return path.join(root, `${brainId}.git`);
+  return process.env.CALLOSIUM_HISTORY_ROOT || path.join(os.homedir(), '.callosium', 'history');
+}
+
+function gitdirFor(brainId: string): string {
+  return path.join(historyRoot(), `${brainId}.git`);
 }
 
 // serialize every op per shadow repo (isomorphic-git shares one on-disk index)
@@ -63,6 +101,13 @@ function withRepoLock<T>(brainId: string, fn: () => Promise<T>): Promise<T> {
 // commits from two processes could corrupt it. An O_EXCL lockfile serializes them. Best-effort:
 // if we can't acquire within the window, the caller skips this snapshot — the change stays on
 // disk and gets captured on the next re-index (git.status makes re-capture idempotent).
+//
+// A holder HEARTBEATS its lockfile (touches the mtime) for as long as it holds it, so a waiter can
+// ask "is the owner still working?" instead of only "does that pid exist?" — see the steal rules.
+const LOCK_HEARTBEAT_MS = 5_000;
+const LOCK_STALE_MS = 60_000; // 12 missed beats: a working holder is never at risk, even mid-import
+const LOCK_ABANDONED_MS = 600_000; // wall-clock fallback where no heartbeat can be read
+const LOCK_FORMAT = 'hb1'; // 3rd line: marks a lockfile whose owner heartbeats (older builds wrote 2)
 async function acquireProcessLock(brainId: string): Promise<(() => Promise<void>) | null> {
   const lockPath = `${gitdirFor(brainId)}.lock`;
   await fs.promises.mkdir(path.dirname(lockPath), { recursive: true }).catch(() => {});
@@ -70,36 +115,55 @@ async function acquireProcessLock(brainId: string): Promise<(() => Promise<void>
   while (Date.now() < deadline) {
     try {
       const fh = await fs.promises.open(lockPath, 'wx'); // exclusive create
-      await fh.write(`${process.pid}\n${os.hostname()}`); // owner pid + host so a waiter can judge liveness
+      await fh.write(`${process.pid}\n${os.hostname()}\n${LOCK_FORMAT}`); // pid + host + format
       await fh.close();
-      return () => fs.promises.rm(lockPath, { force: true }).catch(() => {});
+      // Keep proving we're alive for as long as we hold it. unref'd so it can never keep the process
+      // open, and best-effort — a failed touch just costs one beat out of the twelve we can miss.
+      const beat = setInterval(() => {
+        const now = new Date();
+        void fs.promises.utimes(lockPath, now, now).catch(() => {});
+      }, LOCK_HEARTBEAT_MS);
+      beat.unref();
+      return () => {
+        clearInterval(beat);
+        return fs.promises.rm(lockPath, { force: true }).catch(() => {});
+      };
     } catch {
-      // Decide whether to steal a contended lock. On the SAME machine the owner pid is authoritative:
-      // steal only if that process is DEAD, NEVER on wall-clock age — a legit baseline import can hold
-      // the lock for >10 min on a large vault, and stealing a live local holder would let two
-      // processes commit to the shared git index/refs concurrently and corrupt them. The age-based
-      // steal is a last-resort ONLY for a lock left by a process on ANOTHER machine (a OneDrive/iCloud
-      // synced git-dir), where the recorded pid is meaningless against our local process table.
+      // Decide whether to steal a contended lock. Leaving one alone needs BOTH: the owner still
+      // exists, and it is still working. The pid answers the first; only the heartbeat answers the
+      // second. Trusting the pid alone (what we did before) made a lock left by a crashed Callosium
+      // immortal as soon as its pid was RECYCLED by any unrelated long-lived process — pids get
+      // reused, and the same-machine branch never aged out — so version history for that brain
+      // stayed silently off with no way back short of deleting the file by hand. Rules now:
+      // dead pid → steal; alive but the heartbeat stopped → steal; alive and beating → leave it
+      // (a legit baseline import holds the lock for >10 min on a large vault and keeps beating the
+      // whole time, so it is still never stolen — stealing a live holder would let two processes
+      // commit to the shared git index/refs at once and corrupt them).
       try {
         const raw = await fs.promises.readFile(lockPath, 'utf8').catch(() => '');
         const st = await fs.promises.stat(lockPath);
-        const [pidStr, hostStr = ''] = raw.split('\n');
+        const [pidStr, hostStr = '', fmt = ''] = raw.split('\n');
         const pid = parseInt(pidStr, 10);
         const sameMachine = hostStr.trim() === os.hostname();
-        let steal = false;
-        if (sameMachine) {
-          // Local owner: trust the pid. Dead → steal; alive → leave it (ignore age entirely).
-          if (Number.isFinite(pid) && pid > 0 && pid !== process.pid) {
-            try {
-              process.kill(pid, 0); // throws ESRCH if that process no longer exists
-            } catch {
-              steal = true; // owner is gone
-            }
+        const idleMs = Date.now() - st.mtimeMs;
+        let steal: boolean;
+        if (sameMachine && Number.isFinite(pid) && pid > 0) {
+          let alive = true;
+          try {
+            process.kill(pid, 0); // signal 0 = existence probe, delivers nothing
+          } catch (e) {
+            // ESRCH is the ONLY code that means "gone". EPERM means the process EXISTS but belongs
+            // to another user (a second desktop session on the same box) — reading that as gone
+            // stole the lock from a LIVE holder, which is exactly the corruption we lock against.
+            alive = (e as NodeJS.ErrnoException)?.code === 'EPERM';
           }
+          // No format marker → written by an older build that never beat; age it out on wall-clock
+          // instead, so a legacy lock can still be recovered rather than pinning history forever.
+          steal = !alive || idleMs > (fmt.trim() === LOCK_FORMAT ? LOCK_STALE_MS : LOCK_ABANDONED_MS);
         } else {
-          // Different (or unknown/legacy-format) machine: pid can't be verified here, so fall back to
-          // the wall-clock age heuristic for an abandoned cross-machine lock.
-          steal = Date.now() - st.mtimeMs > 600_000;
+          // Different (or unreadable/legacy-format) machine — a OneDrive/iCloud synced git-dir. The
+          // pid is meaningless against our local process table, so wall-clock age is all we have.
+          steal = idleMs > LOCK_ABANDONED_MS;
         }
         if (steal) await fs.promises.rm(lockPath, { force: true });
       } catch {
@@ -174,14 +238,117 @@ async function listNotePaths(vaultRoot: string): Promise<string[]> {
   return out;
 }
 
-function commit(gitdir: string, vaultRoot: string, source: string, message: string): Promise<string> {
-  return git.commit({
+// commits this process has added to each shadow repo since it last checked retention
+const commitsSincePrune = new Map<string, number>();
+// Shadow repos that crossed PRUNE_EVERY_COMMITS and are waiting for a backstop pass.
+const retentionDue = new Set<string>();
+
+/** Run the backstop retention pass, if this brain is due, WITHOUT making the caller wait for it.
+ *
+ *  Must be called after the caller's write lock is released: pruneHistory takes the same lock, so
+ *  calling it from inside would deadlock in-process, and awaiting it would just move the stall back
+ *  into the note save we are trying to keep fast. Detached and unref'd, so a short-lived CLI exits
+ *  immediately rather than sitting on a sweep it doesn't need — the boot pass will catch that store
+ *  next time. Being cut off mid-sweep is safe by construction: sweepUnreachable points the refs at
+ *  the kept set BEFORE it unlinks anything, so an interrupted pass leaves reclaimable garbage, never
+ *  a ref naming a deleted object. */
+function scheduleRetention(brainId: string): void {
+  if (!retentionDue.delete(gitdirFor(brainId))) return;
+  setTimeout(() => void pruneHistory(brainId).catch(() => {}), 0).unref();
+}
+
+async function commit(gitdir: string, vaultRoot: string, source: string, message: string): Promise<string> {
+  const oid = await git.commit({
     fs,
     dir: vaultRoot,
     gitdir,
     message,
     author: { name: source, email: AUTHOR_EMAIL, timestamp: Math.floor(Date.now() / 1000), timezoneOffset: 0 },
   });
+  // Retention is NOT run here. It used to be, inside this lock — and since the pass costs seconds
+  // and scales with KEEP_VERSIONS, that put a multi-second stall directly in the latency of one
+  // unlucky note save, and blocked every other writer behind it. Boot does the real work; all this
+  // does is flag a session that has run long enough to need a backstop pass, which the caller fires
+  // after it has released the lock.
+  const n = (commitsSincePrune.get(gitdir) ?? 0) + 1;
+  if (n >= PRUNE_EVERY_COMMITS) {
+    commitsSincePrune.set(gitdir, 0);
+    retentionDue.add(gitdir);
+  } else commitsSincePrune.set(gitdir, n);
+  return oid;
+}
+
+// Every tree/blob oid reachable from one tree. `seen` doubles as the visited set, which is what
+// makes this affordable across thousands of commits: consecutive versions share all but one subtree.
+async function collectReachable(gitdir: string, treeOid: string, seen: Set<string>): Promise<void> {
+  if (seen.has(treeOid)) return;
+  seen.add(treeOid);
+  const { tree } = await git.readTree({ fs, gitdir, oid: treeOid });
+  for (const e of tree) {
+    if (e.type === 'tree') await collectReachable(gitdir, e.oid, seen);
+    else seen.add(e.oid);
+  }
+}
+
+// Delete every loose object not reachable from `keptCommits` — our own gc, since isomorphic-git has
+// none. Caller must hold the write lock AND must already have pointed the refs/shallow marker at
+// the kept set: we delete objects LAST so a crash mid-sweep can never leave a ref naming an object
+// we removed. (Concurrent readers in another process are unlocked by design; the worst case is one
+// timeline read that throws and is caught, not a damaged repo.)
+async function sweepUnreachable(gitdir: string, keptCommits: string[]): Promise<number> {
+  const keep = new Set<string>(keptCommits);
+  for (const oid of keptCommits) {
+    const { commit } = await git.readCommit({ fs, gitdir, oid });
+    await collectReachable(gitdir, commit.tree, keep);
+  }
+  // The on-disk index can name blobs no commit does — a crash between git.add and the commit leaves
+  // one staged. The next commit would write a tree pointing at it, so the index is a root too.
+  await git
+    .walk({
+      fs,
+      gitdir,
+      trees: [git.STAGE()],
+      map: async (_filepath, entries) => {
+        const oid = await entries?.[0]?.oid();
+        if (oid) keep.add(oid);
+        return undefined; // NOT null — walk() reads null as "prune this subtree" and would stop at the root
+      },
+    })
+    .catch(() => {});
+  let removed = 0;
+  const objRoot = path.join(gitdir, 'objects');
+  for (const bucket of await fs.promises.readdir(objRoot).catch(() => [] as string[])) {
+    if (!/^[0-9a-f]{2}$/.test(bucket)) continue; // 2-hex buckets only — never info/ or pack/
+    const dir = path.join(objRoot, bucket);
+    for (const name of await fs.promises.readdir(dir).catch(() => [] as string[])) {
+      if (!/^[0-9a-f]{38}$/.test(name) || keep.has(bucket + name)) continue;
+      await fs.promises.rm(path.join(dir, name), { force: true }).catch(() => {});
+      removed++;
+    }
+  }
+  return removed;
+}
+
+// Retention: keep the newest KEEP_VERSIONS commits, drop the tail. Returns loose objects reclaimed.
+// Caller must hold the write lock.
+//
+// We mark the oldest kept commit SHALLOW rather than rewriting the chain: git.log honours `shallow`
+// and simply stops there instead of following a parent we deleted, and — the reason it's worth
+// doing this way — every kept commit keeps its exact oid, so a version id the History panel is
+// already holding is still restorable after a prune. A rewrite would silently invalidate all of them.
+async function pruneIfNeeded(gitdir: string): Promise<number> {
+  const log = await git.log({ fs, gitdir, depth: KEEP_VERSIONS + 1 }).catch(() => []);
+  if (log.length <= KEEP_VERSIONS) return 0; // depth-capped, so this costs O(KEEP_VERSIONS) at worst
+  const kept = log.slice(0, KEEP_VERSIONS).map((c) => c.oid);
+  await fs.promises.writeFile(path.join(gitdir, 'shallow'), `${kept[kept.length - 1]}\n`);
+  return sweepUnreachable(gitdir, kept);
+}
+
+// Public: apply retention now. The write path already does this every PRUNE_EVERY_COMMITS commits;
+// this is for a caller that wants to reclaim disk on demand (Settings) or to test it.
+export async function pruneHistory(brainId: string): Promise<number> {
+  const gitdir = gitdirFor(brainId);
+  return withWriteLock(brainId, async () => ((await hasHead(gitdir)) ? pruneIfNeeded(gitdir) : 0));
 }
 
 // create the shadow repo + baseline commit (whole vault) if absent. Caller must hold the lock.
@@ -206,7 +373,12 @@ async function initIfNeeded(vaultRoot: string, gitdir: string): Promise<void> {
 // "before" to diff against. Idempotent; safe to call on every boot.
 export async function ensureHistory(vaultRoot: string, brainId: string): Promise<void> {
   const gitdir = gitdirFor(brainId);
-  await withWriteLock(brainId, () => initIfNeeded(vaultRoot, gitdir));
+  await withWriteLock(brainId, async () => {
+    await initIfNeeded(vaultRoot, gitdir);
+    // Boot is the other retention hook (the write path counts commits): it catches a store left
+    // over budget by a previous run. Both callers already invoke ensureHistory fire-and-forget.
+    await pruneIfNeeded(gitdir).catch(() => {});
+  });
 }
 
 // Public: snapshot the CURRENT on-disk content of one note as a new version, attributed to
@@ -257,22 +429,35 @@ export async function snapshotNote(
     // there is nothing new to version, so don't create a spurious empty commit / false-success oid.
     if (status === 'unmodified' || status === 'absent') return null;
     return commit(gitdir, vaultRoot, source, message ?? `${source}: ${relpath}`);
-  });
+  }).finally(() => scheduleRetention(brainId)); // outside the lock — never in a save's latency
 }
 
-// Public: the version timeline for one note, newest first.
-export async function listVersions(vaultRoot: string, brainId: string, relpath: string): Promise<Version[]> {
+// Public: the version timeline for one note, newest first, capped at `limit` entries.
+//
+// Two deliberate departures from how this used to work, both about cost. It no longer runs under
+// withRepoLock: git.log is a pure read (it never touches the shared index that lock exists for),
+// and queueing it there meant opening the History panel on a long-lived brain stalled the owner's
+// own note saves behind a walk of the entire repo history. And the walk is bounded now — `depth`
+// caps what we build and ship, and retention caps how far back there is to walk at all.
+export async function listVersions(
+  vaultRoot: string,
+  brainId: string,
+  relpath: string,
+  limit: number = MAX_VERSIONS_LISTED,
+): Promise<Version[]> {
   const gitdir = gitdirFor(brainId);
-  return withRepoLock(brainId, async () => {
-    if (!(await hasHead(gitdir))) return [];
-    const log = await git.log({ fs, dir: vaultRoot, gitdir, filepath: relpath, force: true }).catch(() => []);
-    return log.map((c) => ({
-      oid: c.oid,
-      ts: (c.commit.author.timestamp || 0) * 1000,
-      source: c.commit.author.name || 'unknown',
-      message: (c.commit.message || '').split('\n')[0],
-    }));
-  });
+  if (!(await hasHead(gitdir))) return [];
+  // depth is "commits collected before stopping" and can overshoot by one with a filepath, so ask
+  // for one more than we want and slice.
+  const log = await git
+    .log({ fs, dir: vaultRoot, gitdir, filepath: relpath, force: true, depth: limit + 1 })
+    .catch(() => []);
+  return log.slice(0, limit).map((c) => ({
+    oid: c.oid,
+    ts: (c.commit.author.timestamp || 0) * 1000,
+    source: c.commit.author.name || 'unknown',
+    message: (c.commit.message || '').split('\n')[0],
+  }));
 }
 
 // Public: the content of one note as of a given version (commit oid), or null if absent there.
@@ -407,5 +592,97 @@ export async function captureExternal(vaultRoot: string, brainId: string): Promi
     }
     if (out.length) await commit(gitdir, vaultRoot, 'external', `external: ${out.length} note(s) changed outside Callosium`);
     return out;
+  }).finally(() => scheduleRetention(brainId)); // outside the lock — see scheduleRetention
+}
+
+// ── PURGE (privacy) ─────────────────────────────────────────────────────────────────────────────
+// Deleting a note from the vault does NOT delete Callosium's copies of it, and never did: the
+// shadow store keeps every version of every note forever, deliberately, because that's what makes
+// an accidental delete recoverable. The flip side is that until now there was no way anywhere in
+// the product to actually get rid of something — an owner who deleted a note (or the whole brain)
+// still had our copies of it on their disk, indefinitely, with no UI and no command that touched
+// them. These are that path. They are erase, not restore: what they remove is unrecoverable.
+//
+// DELIBERATELY not wired to the ordinary delete flow, and it should stay that way. Deleting a note
+// is the single most common thing a version history exists to undo — "I deleted it, get it back" is
+// the feature. Purging on delete would quietly convert the safety net into a shredder and make the
+// most-wanted restore the one that cannot work. These belong behind an explicit, differently-worded
+// owner action ("erase permanently", "forget this brain"), shown as irreversible, and nowhere else.
+// The bar is the owner asking for erasure, not the owner deleting a file.
+//
+// Whoever wires them: purgeNote must run AFTER the note is gone from the vault, or the next
+// captureExternal simply re-adds it; and purgeBrain must also clear the caller's `ensuredBrains`
+// entry in src/mcp/server.ts, or the next write assumes a baseline that no longer exists.
+
+// Rebuild `treeOid` without the entry at `segments`, returning the new tree oid — or null if that
+// path isn't in this tree, which is the common case and lets the caller reuse the tree as-is.
+async function treeWithout(gitdir: string, treeOid: string, segments: string[]): Promise<string | null> {
+  const { tree } = await git.readTree({ fs, gitdir, oid: treeOid });
+  const idx = tree.findIndex((e) => e.path === segments[0]);
+  if (idx < 0) return null;
+  let next = tree;
+  if (segments.length === 1) {
+    next = tree.filter((_, i) => i !== idx);
+  } else {
+    if (tree[idx].type !== 'tree') return null;
+    const sub = await treeWithout(gitdir, tree[idx].oid, segments.slice(1));
+    if (sub === null) return null;
+    const { tree: subEntries } = await git.readTree({ fs, gitdir, oid: sub });
+    // a folder that held nothing but the purged note goes with it
+    next = subEntries.length ? tree.map((e, i) => (i === idx ? { ...e, oid: sub } : e)) : tree.filter((_, i) => i !== idx);
+  }
+  return git.writeTree({ fs, gitdir, tree: next });
+}
+
+// Public: erase one note from the version store — every version, in every commit — and reclaim the
+// objects. Returns how many versions were removed (0 if we never had it). Call it AFTER the note is
+// gone from the vault.
+//
+// This is a filter-branch: every commit is rewritten without that path, so every commit oid in the
+// repo changes. That's the cost of a real erase (leaving the old commits reachable would leave the
+// content on disk), and it's why this is an explicit owner action rather than something automatic.
+// An open History panel just needs a reload — the notes themselves are untouched.
+export async function purgeNote(vaultRoot: string, brainId: string, relpath: string): Promise<number> {
+  const gitdir = gitdirFor(brainId);
+  const filepath = relpath.replace(/\\/g, '/'); // git paths are always '/'-separated
+  return withWriteLock(brainId, async () => {
+    if (!(await hasHead(gitdir))) return 0;
+    const versions = await git.log({ fs, dir: vaultRoot, gitdir, filepath, force: true }).catch(() => []);
+    if (!versions.length) return 0; // never versioned here — nothing to erase, nothing to rewrite
+    const segments = filepath.split('/').filter(Boolean);
+    const log = await git.log({ fs, gitdir }); // full chain (stops at any shallow boundary)
+    const rewritten: string[] = [];
+    let parent: string[] = [];
+    for (const entry of log.slice().reverse()) {
+      // oldest first: a parent must exist before the child that names it
+      const tree = (await treeWithout(gitdir, entry.commit.tree, segments)) ?? entry.commit.tree;
+      const oid = await git.writeCommit({ fs, gitdir, commit: { ...entry.commit, tree, parent } });
+      rewritten.push(oid);
+      parent = [oid];
+    }
+    const branch = (await git.currentBranch({ fs, gitdir, fullname: true })) || 'refs/heads/main';
+    await git.writeRef({ fs, gitdir, ref: branch, value: rewritten[rewritten.length - 1], force: true });
+    // The rewritten chain starts at a real root, so a shallow marker left by an earlier prune now
+    // names an oid that doesn't exist — drop it, or git.log would try to walk past the new root.
+    await fs.promises.rm(path.join(gitdir, 'shallow'), { force: true }).catch(() => {});
+    // Drop the index entry too: it still names the purged blob, and the next commit would write a
+    // tree pointing at an object we're about to delete.
+    await git.remove({ fs, dir: vaultRoot, gitdir, filepath }).catch(() => {});
+    await sweepUnreachable(gitdir, rewritten);
+    return versions.length;
   });
+}
+
+// Public: erase the ENTIRE shadow store for a brain — every version of every note. For "forget this
+// brain" and for an owner who deletes their vault: without this, Callosium's copy of a brain that
+// no longer exists outlives it under ~/.callosium/history forever.
+export async function purgeBrain(brainId: string): Promise<void> {
+  const gitdir = path.resolve(gitdirFor(brainId));
+  // Belt and braces before a recursive delete: only ever remove the '<brainId>.git' directory we
+  // built ourselves directly under the history root, never wherever a malformed brainId resolves to.
+  if (!gitdir.endsWith('.git') || path.dirname(gitdir) !== path.resolve(historyRoot())) {
+    throw new Error('history: refusing to purge outside the history root');
+  }
+  await withWriteLock(brainId, () => fs.promises.rm(gitdir, { recursive: true, force: true }));
+  commitsSincePrune.delete(gitdirFor(brainId));
 }

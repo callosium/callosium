@@ -55,6 +55,13 @@ export interface VaultTexts {
  *  question, but never outranks a live note on a generic one. */
 export const ARCHIVE_DEMOTION = 0.45;
 
+/** Hard ceiling on any QUERY entering the engine (never on the corpus). Every
+ *  entry point that scans the vault per query token pays O(tokens x files) of
+ *  synchronous CPU, so an oversized query — a pasted or injected blob — stalls
+ *  the single-process host for everyone. Shared by recall() and searchNotes()
+ *  so the two can't drift: a bound on one door is not a bound. */
+const MAX_QUERY_CHARS = 4000;
+
 /** One honesty-gate decision, as the gate saw it. */
 export interface GateProbe {
   question: string;
@@ -594,6 +601,15 @@ export async function brainFind(
     }
     if (!episodicIntent) for (const f of archived) if (agg.has(f)) agg.set(f, agg.get(f)! * ARCHIVE_DEMOTION);
     const contentTops = [...agg.entries()]
+      // System/ is operational state, never knowledge — stage 2 already skips it,
+      // but the content scan reads the WHOLE index (System notes included), so a
+      // quarantined twin or the agent registry could enter the judged pool. That
+      // pool sets finalCoverageRaw, which recall()'s honesty gate consumes — and
+      // recall FILTERS System/ out of every result. The gate was therefore
+      // satisfiable by a note the answer can never contain: measured as a
+      // confident answer whose five returned notes carried none of the evidence.
+      // Coverage may only come from a note that can actually be returned.
+      .filter(([f]) => !f.startsWith('System/'))
       .map(([f, s]) => [s / lenNorm(f), f] as [number, string])
       .sort((a, b) => b[0] - a[0])
       .slice(0, 5)
@@ -704,6 +720,13 @@ export interface SearchHit {
 }
 
 export function searchNotes(query: string, vaultTexts: VaultTexts, limit = 20, isVisible?: (f: string) => boolean): SearchHit[] {
+  // Same query bound recall() applies, for the same reason and on the same
+  // surface: search is an MCP tool an agent can call with anything it holds, and
+  // its scan is O(query_tokens x files) of SYNCHRONOUS work in the single-process
+  // host. A pasted/injected blob (measured: 389KB → 40,000 tokens over 400 notes)
+  // blocked the event loop for ~1.9s per call — the server stalls for every other
+  // agent. Real searches are a phrase; 4,000 chars is far past any of them.
+  if (query.length > MAX_QUERY_CHARS) query = query.slice(0, MAX_QUERY_CHARS);
   const words = tokenize(query);
   if (!words.length) return [];
   const { files, texts, contentIndex, archived } = vaultTexts;
@@ -1000,7 +1023,13 @@ export function relationshipHonesty(question: string, answer: RecallAnswer, text
   return {
     ...answer,
     found: false,
-    results: answer.results ?? [],
+    // Drop the results, exactly like every other refusal in this engine. Keeping
+    // them handed the caller the path AND the full excerpt of the very note we
+    // just said we won't stand behind — and an agent that receives an excerpt
+    // reads it (the CLI and dashboard only hide results because they branch on
+    // `found`; the MCP client sees the whole payload). A refusal that still
+    // ships the content is not a refusal.
+    results: [],
     notInBrainReason: `That's a question about a person, but the closest match is ${article} ${type} note, not a person — so answering it could be wrong. Add a note for them, or tell me who you mean.`,
   };
 }
@@ -1021,9 +1050,9 @@ export async function recall(
   // (a huge pasted/injected blob) would otherwise explode into tens of thousands
   // of tokens and RangeError the variadic Math.max(...words) spreads — or OOM the
   // fuzzy corrector — crashing the single-process host. Real questions are a
-  // sentence; 4000 chars is already far past any genuine query. (Note indexing
-  // is unaffected — this caps only the QUERY, never the corpus.)
-  if (question.length > 4000) question = question.slice(0, 4000);
+  // sentence; MAX_QUERY_CHARS is already far past any genuine query. (Note
+  // indexing is unaffected — this caps only the QUERY, never the corpus.)
+  if (question.length > MAX_QUERY_CHARS) question = question.slice(0, MAX_QUERY_CHARS);
   const index = ensureRankIndex(vaultTexts, graph);
 
   // ── multi-target comparisons: "how does X compare to Y" is TWO lookups.
@@ -1373,7 +1402,14 @@ export async function recall(
   // applied only under temporal intent, never inside RRF (the bucket-tier
   // experiment showed rank-position tiers collapse under RRF's decay).
   if (temporal && fused.length) {
-    const now = Math.max(...fused.map((f) => vaultTexts.mtimes.get(f.path) ?? 0));
+    // Age is measured on the note's CONTENT date (recencyMs: dated filename, a
+    // /YYYY/MM path, or frontmatter date, falling back to mtime), NOT on the file
+    // mtime — same rule the temporal lanes already rank by. Ranking by mtime here
+    // contradicted them: a re-synced or re-saved OLD note (OneDrive/iCloud rewrite
+    // every file it touches, and any edit to a two-year-old log restamps it) got
+    // the full freshness boost and won "what happened recently", burying the note
+    // the week actually belonged to.
+    const now = Math.max(...fused.map((f) => recencyMs(f.path)));
     const { fadeDays, maxBoost } = RETRIEVAL_SCHEMA.recency;
     // Coverage gate: recency may only re-rank the BEST-matching tier. A recent
     // note that matches FEWER of the query's content words must never leapfrog a
@@ -1395,7 +1431,7 @@ export async function recall(
     fused = fused
       .map((f) => {
         if ((covs.get(f.path) ?? 0) < maxCov - 1e-9) return f; // not a best-tier match — no recency lift
-        const age = (now - (vaultTexts.mtimes.get(f.path) ?? 0)) / 86400000;
+        const age = (now - recencyMs(f.path)) / 86400000;
         const recency = Math.max(0, 1 - age / fadeDays);
         return { ...f, rrf: f.rrf * (1 + maxBoost * recency) };
       })
@@ -1861,12 +1897,17 @@ export async function recall(
     const base = f.split('/').pop()!.replace(/\.md$/, '').toLowerCase();
     const rare = words.filter((w) => !r.absentTerms.includes(w));
     const filenameHits = rare.filter((w) => base.includes(w)).length;
-    // Confidence must describe THIS result. `gateCov` was computed on fused[0], so
-    // the TOP result (results.length === 0 here) IS the gateCov note → keep gateCov;
-    // but results 2..N previously ALSO inherited gateCov (the TOP's coverage),
-    // overstating their confidence (ChatGPT I13) — they now get their OWN section
-    // coverage. Only a display hint; never affects ranking/found.
-    const covForLabel = results.length === 0 ? gateCov : coverage(section.section, words, idfMap);
+    // Confidence must describe THIS result — the top one included. Results 2..N
+    // already got their own coverage (ChatGPT I13); the top kept `gateCov` on the
+    // premise that gateCov IS fused[0]'s coverage. It isn't: gateCov is
+    // max(brainFind's finalCoverageRaw, topCov) — a POOL-WIDE maximum over up to
+    // ten judged notes, most of which are not fused[0] and some of which are not
+    // returned at all. So the top result routinely wore another note's number:
+    // measured, a rank-1 note whose excerpt carries 1 of 3 query terms labelled
+    // 'probable' on the strength of a demoted catalogue's full coverage. Every
+    // result now scores the excerpt it actually ships. Display hint only; never
+    // affects ranking/found (the gate still consumes gateCov, above).
+    const covForLabel = coverage(section.section, words, idfMap);
     const createSafety: RecallResult['createSafety'] =
       // A novel-term auto-correction can never yield a confident 'exists' — the
       // corrected word might be a different entity than the user meant (TRUST FIX 2).

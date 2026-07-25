@@ -25,3 +25,18 @@ that would regress the engine / MCP transport. They are tracked for a clean upst
 The forced remediations (`npm audit fix --force`) would install `@modelcontextprotocol/sdk@1.24.3`
 (a breaking downgrade of the MCP transport) and bump majors under transformers. We do not apply them;
 we will pick up patched versions when the upstreams release non-breaking fixes.
+
+### Verifying "unreachable" rather than asserting it
+
+"Unreachable" is a claim about runtime, so it is checked at runtime rather than argued from the
+dependency tree. Hook `Module._load`, then exercise the real paths — a full recall (which loads the
+embedding runtime), the MCP server, and the dashboard server:
+
+```bash
+node -e 'const M=require("module"),h=new Set(),o=M._load;M._load=function(r){if(["sharp","adm-zip","hono"].some(w=>r===w||r.startsWith(w+"/")))h.add(r);return o.apply(this,arguments)};process.on("exit",()=>console.error("loaded:",h.size?[...h]:"NONE"))' --require /dev/stdin src/cli.ts recall "anything" --brain <a-brain>
+```
+
+Last run (26 Jul 2026, a real `recall` against a freshly `init`ed brain): **NONE**. None of the three
+packages is loaded, so no advisory in them is on any code path Callosium executes. Re-run this after
+any dependency bump — a lazily-required image or static-file path could appear without the tree
+changing shape.

@@ -76,6 +76,7 @@ function map_teardown(){
   state.map_return = null;
   state.map_pulses = [];
   state.map_fly = null; state.map_gesture = false;
+  if(state.map_settleT){ clearTimeout(state.map_settleT); state.map_settleT = null; }
   if(state.map_resizeT){ clearTimeout(state.map_resizeT); state.map_resizeT = null; }
   if(state.map_gestureT){ clearTimeout(state.map_gestureT); state.map_gestureT = null; }
   if(state.map_resize){ removeEventListener('resize', state.map_resize); state.map_resize = null; }
@@ -355,13 +356,11 @@ async function map_load(){
   };
   document.addEventListener('visibilitychange', state.map_vis);
 
-  // first frame: reduced motion settles synchronously and draws once. Otherwise
-  // a time-boxed synchronous pre-roll organizes the map before first paint
-  // (~350ms budget), and any leftover cooling animates after.
+  // first frame: reduced motion settles in yielding slices and draws once.
+  // Otherwise a time-boxed synchronous pre-roll organizes the map before first
+  // paint (~350ms budget), and any leftover cooling animates after.
   if(window.__reduceMotion){
-    map_simulate(true);
-    map_afterSettle(true);
-    state.map_perf.presentMs = state.map_perf.settleMs;
+    map_settleQuiet(gen);
   } else {
     const deadline = t0 + MAP_PREROLL_MS;
     while(state.map_alpha > 0 && performance.now() < deadline){ map_simulate(false, 8); }
@@ -377,6 +376,34 @@ async function map_load(){
     state.map_perf.presentMs = Math.round(performance.now() - t0);
     map_wake();
   }
+}
+
+// Reduced motion still wants ONE settled frame and no animation — but running the
+// whole cooling schedule (~180 ticks) in a single synchronous call blocked the main
+// thread for as long as the layout took: measured 1.7s at 1,500 notes and 7.0s at
+// 4,000, during which the tab was frozen — no scrolling, no nav, no Escape. Reduce
+// motion is an accessibility setting, so it was handing its users the worst
+// experience on the screen. Same ticks, same deterministic result, run in ~24ms
+// slices that yield to the event loop between them. The loading overlay is held up
+// until it's done, so a half-settled layout is never shown: still zero motion.
+const MAP_SLICE_MS = 24;
+function map_settleQuiet(gen){
+  map_showOverlay('loading');
+  const step = ()=>{
+    state.map_settleT = null;
+    if(state.screen !== 'map' || gen !== state.map_gen) return;   // navigated away or superseded
+    const until = performance.now() + MAP_SLICE_MS;
+    // ONE tick per deadline check: a tick is the granularity floor, and on a big
+    // brain a single tick already costs tens of ms, so batching them (the pre-roll
+    // uses 8) blew straight past the budget — measured 496ms slices at 4k notes.
+    // map_simulate zeroes the alpha once the sim is cold, so this always terminates.
+    while(state.map_alpha > 0 && performance.now() < until) map_simulate(false, 1);
+    if(state.map_alpha > 0){ state.map_settleT = setTimeout(step, 0); return; }
+    map_showOverlay('none');
+    map_afterSettle(true);
+    state.map_perf.presentMs = state.map_perf.settleMs;
+  };
+  state.map_settleT = setTimeout(step, 0);
 }
 
 function map_sizeCanvas(cv){
@@ -550,9 +577,10 @@ function map_tick(alpha){
   return maxV;
 }
 
-// run the sim. full=true: cool all the way to rest synchronously (reduced
-// motion). Otherwise run `ticks` ticks with the live alpha (pre-roll chunk or
-// one frame step).
+// run the sim. full=true: cool all the way to rest in one synchronous call (kept
+// for a caller that can afford to block; the reduced-motion path no longer can —
+// see map_settleQuiet). Otherwise run `ticks` ticks with the live alpha (pre-roll
+// chunk, settle slice, or one frame step).
 function map_simulate(full, ticks){
   const G = state.map_graph; if(!G) return 0;
   let maxV = 0, n = 0;

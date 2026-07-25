@@ -5,6 +5,88 @@
 import matter from 'gray-matter';
 import type { Frontmatter, Note, NotePath } from './types.ts';
 
+// ── YAML comments a human wrote in their own frontmatter ──────────────────────
+// js-yaml hands back VALUES only; every `# ...` in the block is discarded at
+// parse time, so the emitter below had nothing to re-emit and every agent write
+// silently deleted the owner's notes-to-self ("# do not remove", "# why this is
+// on hold"). That breaks the one promise the product makes about the files: they
+// stay yours. We keep the comment lines from the RAW block, anchored to the
+// top-level key they sit above (plus a leading and a trailing group), and put
+// them back on the way out.
+//
+// Side-channel rather than a field on Note: the comments belong to the parsed
+// frontmatter OBJECT, and a WeakMap keyed on it needs no change to the shared
+// Note shape and is collected with the note. Every write path mutates
+// note.frontmatter IN PLACE (server.ts stamps updated/updated_by on the object
+// parseNote returned), so the lookup hits. A caller that builds a brand-new
+// frontmatter object gets no comments — correct: it had none.
+//
+// Scope, deliberately: TOP-LEVEL comments only (column 0). A comment nested
+// inside a sub-mapping would have to be anchored by key PATH, which is a real
+// re-parse of the block; the flat case is what humans actually write in
+// frontmatter, and this is a strict improvement over deleting all of them.
+interface FmComments {
+  /** Comment lines before the first key. */
+  lead: string[];
+  /** Comment lines sitting directly above a top-level key. */
+  above: Map<string, string[]>;
+  /** Trailing `# ...` on a top-level key's own line. */
+  inline: Map<string, string>;
+  /** Comment lines after the last key. */
+  tail: string[];
+}
+const fmComments = new WeakMap<object, FmComments>();
+
+/** Index of a comment-starting `#` on a line, or -1. YAML only opens a comment
+ *  at a `#` that begins the line or follows whitespace, and never inside a
+ *  quoted scalar — so `title: "a # b"` must NOT be split. */
+function inlineCommentAt(line: string): number {
+  let quote: string | null = null;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]!;
+    if (quote) {
+      if (c === '\\' && quote === '"') i++; // escaped char inside a double-quoted scalar
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") quote = c;
+    else if (c === '#' && (i === 0 || /\s/.test(line[i - 1]!))) return i;
+  }
+  return -1;
+}
+
+/** Remember the comment lines of `rawBlock` against the frontmatter object `data`. */
+function rememberComments(data: object, rawBlock: string): void {
+  if (!rawBlock.includes('#')) return; // no comments — nothing to carry
+  const cm: FmComments = { lead: [], above: new Map(), inline: new Map(), tail: [] };
+  let pending: string[] = [];
+  let sawKey = false;
+  let found = false;
+  for (const line of rawBlock.split(/\r?\n/)) {
+    if (/^\s*$/.test(line)) continue;
+    if (/^\s/.test(line)) { pending = []; continue; } // indented: nested content, out of scope
+    const ci = inlineCommentAt(line);
+    if (ci === 0) { pending.push(line.trimEnd()); found = true; continue; }
+    // A top-level key line. Take the name up to its first colon and accept it only
+    // if it really is a key of the parsed object — anything else (a block-sequence
+    // entry, a stray line) must not steal the pending comments.
+    const colon = line.indexOf(':');
+    const name = colon < 0 ? '' : line.slice(0, colon).trim().replace(/^(["'])([\s\S]*)\1$/, '$2');
+    if (name && Object.prototype.hasOwnProperty.call(data, name)) {
+      sawKey = true;
+      if (pending.length) { cm.above.set(name, pending); found = true; }
+      if (ci > 0) { cm.inline.set(name, line.slice(ci).trimEnd()); found = true; }
+    }
+    pending = [];
+  }
+  // Left over at the end: after the last key it's a trailing block; if the block
+  // had no keys at all there is nothing to anchor to, so it leads. (Comments
+  // before the FIRST key are already carried as that key's `above` group, which
+  // puts them back at the top of the block.)
+  if (pending.length) { (sawKey ? cm.tail : cm.lead).push(...pending); found = true; }
+  if (found) fmComments.set(data, cm);
+}
+
 export function parseNote(path: NotePath, raw: string): Note {
   // Strip a leading UTF-8 BOM (U+FEFF). fs.readFile('utf8') does NOT remove it,
   // so a note saved BOM-first by a Windows editor would fail the `---` check
@@ -40,17 +122,21 @@ export function parseNote(path: NotePath, raw: string): Note {
     if (parsed.data === null || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
       return { path, frontmatter: {}, body: clean, rawFile: true };
     }
-    return {
-      path,
-      // gray-matter memoizes by content string: two byte-identical notes (template
-      // twins, sync-conflict pairs) share ONE .data object, so an in-place
-      // attribution stamp on note A poisons note B's next parse and gets written
-      // to disk. Clone per note so mutations stay local. structuredClone keeps
-      // Date instances as Dates (yamlValue's Date branch depends on that).
-      frontmatter: structuredClone(parsed.data) as Frontmatter,
-      body: parsed.content,
-      rawFile: false,
-    };
+    // gray-matter memoizes by content string: two byte-identical notes (template
+    // twins, sync-conflict pairs) share ONE .data object, so an in-place
+    // attribution stamp on note A poisons note B's next parse and gets written
+    // to disk. Clone per note so mutations stay local. structuredClone keeps
+    // Date instances as Dates (yamlValue's Date branch depends on that) — and
+    // preserves shared references, which the serializer's alias guards rely on.
+    const fm = structuredClone(parsed.data) as Frontmatter;
+    // Hold on to the human's YAML comments; js-yaml already threw them away, so
+    // this raw block is the only place they still exist. Never fatal.
+    try {
+      rememberComments(fm, parsed.matter);
+    } catch {
+      /* a comment is never worth failing a read over — worst case they're dropped as before */
+    }
+    return { path, frontmatter: fm, body: parsed.content, rawFile: false };
   } catch {
     // Malformed YAML: treat as raw so we never destroy content; brain check flags it.
     return { path, frontmatter: {}, body: clean, rawFile: true };
@@ -173,30 +259,86 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === 'object' && !Array.isArray(v) && !(v instanceof Date);
 }
 
+// ── YAML anchor/alias blast radius ───────────────────────────────────────────
+// js-yaml resolves every `*alias` into a SHARED OBJECT REFERENCE and discards the
+// anchor NAMES, so by the time frontmatter reaches this serializer there is
+// nothing left to re-emit as `&a`/`*a` — the block emitter below just walks the
+// object graph and writes every reachable node out longhand. Two ways that bit:
+//   • a "billion laughs" block (nine 9-wide alias levels) expands ~9x per level:
+//     measured 219 B in → 285 KB out at five levels, ~1.9 GB at nine. The first
+//     agent write pegs the CPU and rewrites the owner's note as a giant file.
+//   • a self-referential anchor (`a: &a [*a]`) recursed until the engine threw
+//     RangeError "Maximum call stack size exceeded" mid-write.
+// We cannot honestly "preserve" anchors we never received, and MINTING fresh
+// names (&a1/&a2) would itself reformat a human's YAML — the thing this module
+// exists not to do. So we refuse instead: a bounded emitter throws a plain
+// Error, the write path fails cleanly, and the note on disk is left exactly as
+// its owner wrote it (anchors intact). Real frontmatter is tens of nodes; the
+// cap sits three orders of magnitude above that, so nothing legitimate trips it.
+// serializeNote is synchronous and never re-entrant, so module-level counters are
+// safe here.
+const EMIT_BUDGET = 20_000;
+let emitted = 0;
+const emitPath = new Set<object>();
+
+function spend(n = 1): void {
+  emitted += n;
+  if (emitted > EMIT_BUDGET) {
+    throw new Error(
+      'Frontmatter could not be rewritten: its YAML anchors/aliases expand past the safe serializer limit. The note was left unchanged.',
+    );
+  }
+}
+
+/** Guard a container against being emitted inside ITSELF (a self-referential anchor). */
+function enterContainer(o: object): void {
+  if (emitPath.has(o)) {
+    throw new Error('Frontmatter could not be rewritten: it contains a self-referential YAML anchor. The note was left unchanged.');
+  }
+  emitPath.add(o);
+}
+
 // Emit a mapping as YAML BLOCK lines at `depth` (2 spaces/level). A nested map or an array whose
 // items are maps/arrays is emitted as real YAML structure — NOT a quoted JSON string — so a human's
 // structured frontmatter (`meta:`/nested `links:`/lists of objects) round-trips through an agent
 // rewrite untouched, honouring the "never reformat your notes" promise and keeping Obsidian/schema
 // queries working. Scalars still go through yamlValue's careful type-safe quoting.
-function emitMapping(obj: Record<string, unknown>, depth: number): string[] {
+// `cm` (top level only) puts the owner's comment lines back around the key they
+// annotate — see the FmComments block above.
+function emitMapping(obj: Record<string, unknown>, depth: number, cm?: FmComments): string[] {
   const pad = '  '.repeat(depth);
   const out: string[] = [];
-  for (const [k, v] of Object.entries(obj)) {
-    if (v === undefined) continue;
-    const key = yamlKey(k);
-    if (v === null) {
-      out.push(`${pad}${key}: null`);
-    } else if (isPlainObject(v)) {
-      const inner = emitMapping(v, depth + 1);
-      if (inner.length) {
-        out.push(`${pad}${key}:`);
-        out.push(...inner);
-      } else out.push(`${pad}${key}: {}`); // empty mapping round-trips as {}
-    } else if (Array.isArray(v)) {
-      out.push(...emitArray(key, v, depth));
-    } else {
-      out.push(`${pad}${key}: ${yamlValue(v)}`);
+  enterContainer(obj);
+  try {
+    for (const [k, v] of Object.entries(obj)) {
+      if (v === undefined) continue;
+      spend();
+      const key = yamlKey(k);
+      const start = out.length; // where THIS key's lines begin, for comment re-attachment
+      if (v === null) {
+        out.push(`${pad}${key}: null`);
+      } else if (isPlainObject(v)) {
+        const inner = emitMapping(v, depth + 1);
+        if (inner.length) {
+          out.push(`${pad}${key}:`);
+          out.push(...inner);
+        } else out.push(`${pad}${key}: {}`); // empty mapping round-trips as {}
+      } else if (Array.isArray(v)) {
+        out.push(...emitArray(key, v, depth));
+      } else {
+        out.push(`${pad}${key}: ${yamlValue(v)}`);
+      }
+      if (cm && out.length > start) {
+        const above = cm.above.get(k);
+        if (above?.length) out.splice(start, 0, ...above);
+        const inl = cm.inline.get(k);
+        // The inline comment rides the key's OWN line, which is the first line of
+        // this key's block (`key:` header included) once the above-comments are in.
+        if (inl) out[start + (above?.length ?? 0)] += `  ${inl}`;
+      }
     }
+  } finally {
+    emitPath.delete(obj);
   }
   return out;
 }
@@ -207,12 +349,18 @@ function emitMapping(obj: Record<string, unknown>, depth: number): string[] {
 function emitArray(key: string, arr: unknown[], depth: number): string[] {
   const pad = '  '.repeat(depth);
   const items = arr.filter((x) => x !== undefined);
+  spend(items.length); // flow items count too — an aliased wide array is cheap per LINE but not per byte
   const complex = items.some((x) => isPlainObject(x) || Array.isArray(x));
   if (!complex) return [`${pad}${key}: ${yamlValue(items)}`]; // flow style, via yamlValue's array branch
-  const ipad = '  '.repeat(depth + 1);
-  const out = [`${pad}${key}:`];
-  for (const item of items) out.push(...emitSeqItem(item, ipad));
-  return out;
+  enterContainer(arr);
+  try {
+    const ipad = '  '.repeat(depth + 1);
+    const out = [`${pad}${key}:`];
+    for (const item of items) out.push(...emitSeqItem(item, ipad));
+    return out;
+  } finally {
+    emitPath.delete(arr);
+  }
 }
 
 // Emit ONE block-sequence item (a "- ..." line, plus continuation lines) at indent `ipad`. Recurses
@@ -220,6 +368,7 @@ function emitArray(key: string, arr: unknown[], depth: number): string[] {
 // wrongly route through yamlValue's flow path and JSON-stringify. An all-scalar nested array stays
 // compact flow (`- [a, b, c]`).
 function emitSeqItem(item: unknown, ipad: string): string[] {
+  spend();
   if (isPlainObject(item)) {
     const inner = emitMapping(item, 0);
     if (!inner.length) return [`${ipad}- {}`];
@@ -229,10 +378,16 @@ function emitSeqItem(item: unknown, ipad: string): string[] {
   }
   if (Array.isArray(item)) {
     const sub = item.filter((x) => x !== undefined);
+    spend(sub.length);
     if (!sub.some((x) => isPlainObject(x) || Array.isArray(x))) return [`${ipad}- ${yamlValue(sub)}`]; // scalar sub-array → flow
-    const out = [`${ipad}-`]; // a nested block sub-sequence hangs under a bare dash
-    for (const s of sub) out.push(...emitSeqItem(s, `${ipad}  `));
-    return out;
+    enterContainer(item);
+    try {
+      const out = [`${ipad}-`]; // a nested block sub-sequence hangs under a bare dash
+      for (const s of sub) out.push(...emitSeqItem(s, `${ipad}  `));
+      return out;
+    } finally {
+      emitPath.delete(item);
+    }
   }
   if (item === null) return [`${ipad}- null`];
   return [`${ipad}- ${yamlValue(item)}`]; // scalar
@@ -240,7 +395,15 @@ function emitSeqItem(item: unknown, ipad: string): string[] {
 
 export function serializeNote(note: Note): string {
   if (note.rawFile) return note.body;
-  const lines = ['---', ...emitMapping(note.frontmatter as Record<string, unknown>, 0), '---', ''];
+  // Reset the per-call emission guards (see EMIT_BUDGET): serializeNote is
+  // synchronous and never re-entrant, so this is the whole lifetime of a walk.
+  emitted = 0;
+  emitPath.clear();
+  const cm = fmComments.get(note.frontmatter as object);
+  const fields = emitMapping(note.frontmatter as Record<string, unknown>, 0, cm);
+  // `lead` only fires for a block that had comments but no keys at all; comments
+  // above the first key ride that key's `above` group inside emitMapping.
+  const lines = ['---', ...(cm?.lead ?? []), ...fields, ...(cm?.tail ?? []), '---', ''];
   const body = note.body.replace(/^\n/, '');
   return lines.join('\n') + body;
 }

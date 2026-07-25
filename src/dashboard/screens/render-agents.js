@@ -15,6 +15,9 @@ const AG_META = {
   'raycast':        { glyph:'◐', accent:'var(--amber)'   },
 };
 const AG_ACCENTS = ['var(--acid)','var(--synapse)','var(--amber)','var(--ember)'];
+// server errors arrive both ways ("Need an agent id." vs "request failed (500)") and
+// we glue them in front of another sentence — don't run the two together.
+const ag_errText = e => { const s = String(e || '').trim(); return /[.!?]$/.test(s) ? s : (s + '.'); };
 // modal quick-picks — prefill the pair form (no real auto-detection on this build)
 const AG_PRESETS = [
   { id:'gemini',     name:'Gemini',         glyph:'◈', accent:'var(--acid)',   detail:'desktop app' },
@@ -290,6 +293,18 @@ function agentsDetailPanel(agents, toggle){
   const rows = toggle.filter(p => p !== 'Private').map(normalRow).join('')
     + (toggle.includes('Private') ? privateRow() : '');
 
+  // Rotate/rename failures were written to state and announced, but never drawn —
+  // so a sighted owner whose token rotation or rename failed saw literally nothing
+  // change and assumed it had worked. One honest strip, dismissable, right under
+  // the buttons that caused it.
+  const opErr = state.ag_rotateErr || state.ag_renameErr;
+  const opErrRow = opErr ? `
+      <div role="alert" style="display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--edge);background:rgba(255,51,85,.07)">
+        <span style="color:var(--danger);font-size:13px;flex-shrink:0">⚠</span>
+        <span style="flex:1;min-width:0;font-family:var(--mono);font-size:12px;color:var(--danger);line-height:1.5">${esc(opErr)}</span>
+        <button data-ag-act="clearOpErr" aria-label="dismiss" title="dismiss" style="flex-shrink:0;font-family:var(--mono);font-size:13px;color:var(--faint);background:transparent;border:0;cursor:pointer">✕</button>
+      </div>` : '';
+
   // System is the one folder no scope edit can ever grant — the 🔒 that stays.
   const parts = state.ag_data.partitions || [];
   const locked = parts.includes('System') ? `
@@ -320,6 +335,7 @@ function agentsDetailPanel(agents, toggle){
         <button data-ag-act="openUnlink" title="unlink" style="font-family:var(--mono);font-size:10.5px;letter-spacing:.03em;text-transform:uppercase;white-space:nowrap;border:1px solid var(--edge2);color:var(--faint);background:transparent;padding:7px 10px;border-radius:0;cursor:pointer;flex-shrink:0">unlink</button>
         `}
       </div>
+      ${opErrRow}
 
       <div style="padding:15px 20px;border-bottom:1px solid var(--edge);background:var(--surface2);display:flex;align-items:center;gap:11px">
         <span style="width:26px;height:26px;flex-shrink:0;border-radius:0;border:1px solid var(--edge2);display:flex;align-items:center;justify-content:center;color:var(--acid);font-size:13px">✓</span>
@@ -448,7 +464,9 @@ function agentsWire(){
 
   // agent selection
   scr.querySelectorAll('[data-ag-select]').forEach(el => {
-    el.onclick = () => { state.ag_selected = el.dataset.agSelect; agentsPaint(); };
+    // clear any rotate/rename failure with the selection: the strip lives in the
+    // detail panel, so carrying it over would pin one AI's error onto another.
+    el.onclick = () => { state.ag_selected = el.dataset.agSelect; state.ag_rotateErr = null; state.ag_renameErr = null; agentsPaint(); };
     const sel = el.dataset.agSelected === '1';
     el.addEventListener('mouseenter', () => { if(el.dataset.agSelected !== '1') el.style.borderColor = 'var(--faint)'; });
     el.addEventListener('mouseleave', () => { el.style.borderColor = sel ? 'var(--synapse)' : 'transparent'; });
@@ -500,6 +518,7 @@ function agentsWire(){
       if(act === 'rename'){ state.ag_renaming = state.ag_selected; state.ag_renameErr = null; agentsPaint(); setTimeout(() => { const i = document.querySelector('#agRename'); if(i){ i.focus(); i.select(); } }, 0); return; }
       if(act === 'renameCancel'){ state.ag_renaming = null; state.ag_renameErr = null; agentsPaint(); return; }
       if(act === 'renameSave'){ ag_renameSave(); return; }
+      if(act === 'clearOpErr'){ state.ag_rotateErr = null; state.ag_renameErr = null; agentsPaint(); return; }
     };
   });
   // stop clicks inside modal boxes from bubbling to the backdrop
@@ -567,16 +586,25 @@ async function ag_renameSave(){
   const name = inp ? String(inp.value || '').trim() : '';
   if(!id) return;
   if(!name){ if(inp) inp.focus(); return; }
-  state.ag_renameBusy = true; agentsPaint();
+  // one strip shows either error, so a fresh attempt clears the other one's stale text
+  state.ag_renameBusy = true; state.ag_renameErr = null; state.ag_rotateErr = null; agentsPaint();
   try{
     const res = await post('/api/rename', { id, displayName: name });
-    const ag = (state.ag_data.agents || []).find(a => a.id === id);
-    if(ag && res && res.agent) ag.displayName = res.agent.displayName;
-    state.ag_renaming = null; state.ag_renameErr = null;
+    // post() resolves on EVERY status and marks a non-2xx with .error, so a server
+    // refusal landed here, not in the catch: the editor closed with the OLD name
+    // still on screen, which reads as "saved". Keep it open and say what happened.
+    if(res && res.error){ state.ag_renameErr = "couldn't rename it — " + ag_errText(res.error); }
+    else{
+      const ag = (state.ag_data.agents || []).find(a => a.id === id);
+      if(ag && res && res.agent) ag.displayName = res.agent.displayName;
+      state.ag_renaming = null; state.ag_renameErr = null;
+    }
   }catch(e){
-    state.ag_renameErr = (e && e.message) || 'rename failed';
+    state.ag_renameErr = "couldn't rename it — the engine didn't answer.";
   }
-  state.ag_renameBusy = false; agentsPaint();
+  state.ag_renameBusy = false;
+  if(state.ag_renameErr) announce(state.ag_renameErr);
+  agentsPaint();
 }
 
 async function ag_pair(){
@@ -607,7 +635,7 @@ async function ag_rotate(){
   const id = state.ag_selected; if(!id || state.ag_rotating) return;
   const ag = (state.ag_data.agents || []).find(a => a.id === id);
   const name = ag ? (ag.displayName || ag.id) : id;
-  state.ag_rotating = true; agentsPaint();
+  state.ag_rotating = true; state.ag_rotateErr = null; state.ag_renameErr = null; agentsPaint();
   try{
     const res = await post('/api/rotate', { id });
     if(res && res.config){
@@ -619,10 +647,13 @@ async function ag_rotate(){
       state.ag_modalFrom = 'rotate';
       announce('new token ready for ' + name + ' · the old one is dead');
     } else {
-      state.ag_rotateErr = (res && res.error) || 'could not rotate the token.';
+      // No config came back, so there is nothing to re-paste — say that rather
+      // than leaving the owner to guess whether the old key just died.
+      const why = (res && res.error) ? (' — ' + ag_errText(res.error)) : '.';
+      state.ag_rotateErr = "couldn't rotate the token" + why + " No new connection was issued; if this AI stops connecting, rotate again.";
       announce(state.ag_rotateErr);
     }
-  }catch(e){ state.ag_rotateErr = "couldn't rotate — the engine didn't answer."; announce(state.ag_rotateErr); }
+  }catch(e){ state.ag_rotateErr = "couldn't rotate — the engine didn't answer. No new connection was issued; if this AI stops connecting, rotate again."; announce(state.ag_rotateErr); }
   finally{ state.ag_rotating = false; agentsPaint(); }
 }
 

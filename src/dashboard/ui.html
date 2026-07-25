@@ -1235,6 +1235,9 @@ const AG_META = {
   'raycast':        { glyph:'◐', accent:'var(--amber)'   },
 };
 const AG_ACCENTS = ['var(--acid)','var(--synapse)','var(--amber)','var(--ember)'];
+// server errors arrive both ways ("Need an agent id." vs "request failed (500)") and
+// we glue them in front of another sentence — don't run the two together.
+const ag_errText = e => { const s = String(e || '').trim(); return /[.!?]$/.test(s) ? s : (s + '.'); };
 // modal quick-picks — prefill the pair form (no real auto-detection on this build)
 const AG_PRESETS = [
   { id:'gemini',     name:'Gemini',         glyph:'◈', accent:'var(--acid)',   detail:'desktop app' },
@@ -1510,6 +1513,18 @@ function agentsDetailPanel(agents, toggle){
   const rows = toggle.filter(p => p !== 'Private').map(normalRow).join('')
     + (toggle.includes('Private') ? privateRow() : '');
 
+  // Rotate/rename failures were written to state and announced, but never drawn —
+  // so a sighted owner whose token rotation or rename failed saw literally nothing
+  // change and assumed it had worked. One honest strip, dismissable, right under
+  // the buttons that caused it.
+  const opErr = state.ag_rotateErr || state.ag_renameErr;
+  const opErrRow = opErr ? `
+      <div role="alert" style="display:flex;align-items:center;gap:10px;padding:10px 18px;border-bottom:1px solid var(--edge);background:rgba(255,51,85,.07)">
+        <span style="color:var(--danger);font-size:13px;flex-shrink:0">⚠</span>
+        <span style="flex:1;min-width:0;font-family:var(--mono);font-size:12px;color:var(--danger);line-height:1.5">${esc(opErr)}</span>
+        <button data-ag-act="clearOpErr" aria-label="dismiss" title="dismiss" style="flex-shrink:0;font-family:var(--mono);font-size:13px;color:var(--faint);background:transparent;border:0;cursor:pointer">✕</button>
+      </div>` : '';
+
   // System is the one folder no scope edit can ever grant — the 🔒 that stays.
   const parts = state.ag_data.partitions || [];
   const locked = parts.includes('System') ? `
@@ -1540,6 +1555,7 @@ function agentsDetailPanel(agents, toggle){
         <button data-ag-act="openUnlink" title="unlink" style="font-family:var(--mono);font-size:10.5px;letter-spacing:.03em;text-transform:uppercase;white-space:nowrap;border:1px solid var(--edge2);color:var(--faint);background:transparent;padding:7px 10px;border-radius:0;cursor:pointer;flex-shrink:0">unlink</button>
         `}
       </div>
+      ${opErrRow}
 
       <div style="padding:15px 20px;border-bottom:1px solid var(--edge);background:var(--surface2);display:flex;align-items:center;gap:11px">
         <span style="width:26px;height:26px;flex-shrink:0;border-radius:0;border:1px solid var(--edge2);display:flex;align-items:center;justify-content:center;color:var(--acid);font-size:13px">✓</span>
@@ -1668,7 +1684,9 @@ function agentsWire(){
 
   // agent selection
   scr.querySelectorAll('[data-ag-select]').forEach(el => {
-    el.onclick = () => { state.ag_selected = el.dataset.agSelect; agentsPaint(); };
+    // clear any rotate/rename failure with the selection: the strip lives in the
+    // detail panel, so carrying it over would pin one AI's error onto another.
+    el.onclick = () => { state.ag_selected = el.dataset.agSelect; state.ag_rotateErr = null; state.ag_renameErr = null; agentsPaint(); };
     const sel = el.dataset.agSelected === '1';
     el.addEventListener('mouseenter', () => { if(el.dataset.agSelected !== '1') el.style.borderColor = 'var(--faint)'; });
     el.addEventListener('mouseleave', () => { el.style.borderColor = sel ? 'var(--synapse)' : 'transparent'; });
@@ -1720,6 +1738,7 @@ function agentsWire(){
       if(act === 'rename'){ state.ag_renaming = state.ag_selected; state.ag_renameErr = null; agentsPaint(); setTimeout(() => { const i = document.querySelector('#agRename'); if(i){ i.focus(); i.select(); } }, 0); return; }
       if(act === 'renameCancel'){ state.ag_renaming = null; state.ag_renameErr = null; agentsPaint(); return; }
       if(act === 'renameSave'){ ag_renameSave(); return; }
+      if(act === 'clearOpErr'){ state.ag_rotateErr = null; state.ag_renameErr = null; agentsPaint(); return; }
     };
   });
   // stop clicks inside modal boxes from bubbling to the backdrop
@@ -1787,16 +1806,25 @@ async function ag_renameSave(){
   const name = inp ? String(inp.value || '').trim() : '';
   if(!id) return;
   if(!name){ if(inp) inp.focus(); return; }
-  state.ag_renameBusy = true; agentsPaint();
+  // one strip shows either error, so a fresh attempt clears the other one's stale text
+  state.ag_renameBusy = true; state.ag_renameErr = null; state.ag_rotateErr = null; agentsPaint();
   try{
     const res = await post('/api/rename', { id, displayName: name });
-    const ag = (state.ag_data.agents || []).find(a => a.id === id);
-    if(ag && res && res.agent) ag.displayName = res.agent.displayName;
-    state.ag_renaming = null; state.ag_renameErr = null;
+    // post() resolves on EVERY status and marks a non-2xx with .error, so a server
+    // refusal landed here, not in the catch: the editor closed with the OLD name
+    // still on screen, which reads as "saved". Keep it open and say what happened.
+    if(res && res.error){ state.ag_renameErr = "couldn't rename it — " + ag_errText(res.error); }
+    else{
+      const ag = (state.ag_data.agents || []).find(a => a.id === id);
+      if(ag && res && res.agent) ag.displayName = res.agent.displayName;
+      state.ag_renaming = null; state.ag_renameErr = null;
+    }
   }catch(e){
-    state.ag_renameErr = (e && e.message) || 'rename failed';
+    state.ag_renameErr = "couldn't rename it — the engine didn't answer.";
   }
-  state.ag_renameBusy = false; agentsPaint();
+  state.ag_renameBusy = false;
+  if(state.ag_renameErr) announce(state.ag_renameErr);
+  agentsPaint();
 }
 
 async function ag_pair(){
@@ -1827,7 +1855,7 @@ async function ag_rotate(){
   const id = state.ag_selected; if(!id || state.ag_rotating) return;
   const ag = (state.ag_data.agents || []).find(a => a.id === id);
   const name = ag ? (ag.displayName || ag.id) : id;
-  state.ag_rotating = true; agentsPaint();
+  state.ag_rotating = true; state.ag_rotateErr = null; state.ag_renameErr = null; agentsPaint();
   try{
     const res = await post('/api/rotate', { id });
     if(res && res.config){
@@ -1839,10 +1867,13 @@ async function ag_rotate(){
       state.ag_modalFrom = 'rotate';
       announce('new token ready for ' + name + ' · the old one is dead');
     } else {
-      state.ag_rotateErr = (res && res.error) || 'could not rotate the token.';
+      // No config came back, so there is nothing to re-paste — say that rather
+      // than leaving the owner to guess whether the old key just died.
+      const why = (res && res.error) ? (' — ' + ag_errText(res.error)) : '.';
+      state.ag_rotateErr = "couldn't rotate the token" + why + " No new connection was issued; if this AI stops connecting, rotate again.";
       announce(state.ag_rotateErr);
     }
-  }catch(e){ state.ag_rotateErr = "couldn't rotate — the engine didn't answer."; announce(state.ag_rotateErr); }
+  }catch(e){ state.ag_rotateErr = "couldn't rotate — the engine didn't answer. No new connection was issued; if this AI stops connecting, rotate again."; announce(state.ag_rotateErr); }
   finally{ state.ag_rotating = false; agentsPaint(); }
 }
 
@@ -1967,9 +1998,30 @@ function notesRenderMarkdown(body){
     // per-block attribution marker → a subtle "✍ written by X" badge under the block
     const am = ln.match(/<!--\s*✍ written by (.+?) on (\d{4}-\d{2}-\d{2})\s*-->/);
     if(am){ out += '<div style="font-family:var(--mono);font-size:10.5px;color:var(--faint);margin:-3px 0 11px;display:flex;align-items:center;gap:6px"><span style="color:var(--synapse)">✍</span>'+t('written by','كتبها')+' <span style="color:var(--dust)">'+esc(am[1])+'</span><span style="color:var(--edge)">·</span>'+esc(am[2])+'</div>'; return; }
-    // any other HTML comment → hidden (a real markdown renderer hides it too)
-    if(inComment){ if(ln.includes('-->')) inComment=false; return; }
-    if(/^\s*<!--/.test(ln)){ if(!ln.includes('-->')) inComment=true; return; }
+    // any other HTML comment → hidden (a real markdown renderer hides it too).
+    // Strip the comment SPAN, never the whole line: this used to `return` on any
+    // line that opened or closed a comment, so "<!-- draft --> ship on Friday"
+    // and the prose after a multi-line comment's "-->" vanished from the reader
+    // entirely — real note content gone with no hint it was ever there. A line
+    // that is nothing BUT a comment still disappears (no stray blank), and an
+    // unterminated comment still hides the lines that follow until its close.
+    let hadComment = false;
+    if(inComment){
+      const end = ln.indexOf('-->');
+      if(end === -1) return;                       // still wholly inside the comment
+      ln = ln.slice(end+3); inComment = false; hadComment = true;
+    }
+    for(;;){
+      const st = ln.indexOf('<!--');
+      if(st === -1) break;
+      hadComment = true;
+      // search from st+2 so the degenerate empty comment "<!-->" closes itself
+      // instead of swallowing the rest of the note.
+      const en = ln.indexOf('-->', st+2);
+      if(en === -1){ ln = ln.slice(0,st); inComment = true; break; }
+      ln = ln.slice(0,st) + ln.slice(en+3);
+    }
+    if(hadComment && !ln.trim()) return;           // the line held nothing but the comment
     if(ln.trim()===''){ out += '<div style="height:8px"></div>'; return; }
     const e = esc(ln);
     if(/^###\s+/.test(ln)){ out += '<div style="'+B.h3+'">'+notesInline(e.replace(/^###\s+/,''))+'</div>'; return; }
@@ -1986,6 +2038,12 @@ function notesRenderMarkdown(body){
   return out;
 }
 function notesWordCount(body){ const t = String(body||'').trim(); return t ? t.split(/\s+/).length : 0; }
+
+// Separates the disk copy from the user's unsaved text when the save-conflict
+// banner merges the two (see the reload handler in notesRenderAll). Deliberately
+// a visible markdown heading rather than an HTML comment — comments are hidden
+// from the live preview, and this line has to be impossible to miss.
+const NOTES_MERGE_MARK = '\n\n## ⚠ your unsaved version — merge what you want into the text above, then delete from this line down\n\n';
 
 // ── data ──
 async function notesLoadNote(path){
@@ -2262,7 +2320,11 @@ function notesViewerHTML(){
       + '<div id="notesPreview" style="height:100%;overflow:auto;padding:18px 22px 40px;background:var(--surface)"><div style="max-width:640px">'+notesRenderMarkdown(state.notes_draftBody||'')+'</div></div>'
       + '</div>'
       + (state.notes_saveConflict
-          ? '<div style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:var(--amber);padding:9px 22px;border-top:1px solid var(--edge);line-height:1.5">this note changed on disk while you had it open — your edits are safe here. <button type="button" data-notes-reload style="color:var(--synapse);cursor:pointer;text-decoration:underline;background:none;border:0;padding:0;font:inherit">reload the disk version</button> to merge, so you don’t overwrite it.</div>'
+          // Label says exactly what the button does now. The old copy ("reload the
+          // disk version to merge") described a merge it never performed — it
+          // replaced the draft with the disk copy, so the promise on the same line
+          // that "your edits are safe here" was false the moment you clicked.
+          ? '<div style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:var(--amber);padding:9px 22px;border-top:1px solid var(--edge);line-height:1.5">this note changed on disk while you had it open — your edits are safe here. <button type="button" data-notes-reload style="color:var(--synapse);cursor:pointer;text-decoration:underline;background:none;border:0;padding:0;font:inherit">bring the disk version in</button> — it goes above your unsaved text so you can merge the two by hand. nothing is thrown away.</div>'
           : state.notes_saveError
           ? '<div style="flex-shrink:0;font-family:var(--mono);font-size:11px;color:var(--danger);padding:9px 22px;border-top:1px solid var(--edge)">could not save to disk — nothing was changed. try again.</div>'
           : '<div style="flex-shrink:0;font-family:var(--mono);font-size:10.5px;color:var(--faint);padding:9px 22px;border-top:1px solid var(--edge)">plain markdown, saved to your disk, signed as you · <span style="color:var(--dust)">⌘B bold · ⌘I italic</span></div>');
@@ -2382,15 +2444,29 @@ function notesRenderAll(){
   $$('#notesHistOverlay [data-hist-restore]').forEach(el=> el.onclick = ()=> notesRestore(el.dataset.histRestore));
   // conflict banner → pull the disk version into the editor (new baseHash), so the
   // user can re-apply their change on top of what actually landed on disk.
+  // This used to assign the disk copy straight over state.notes_draftBody: the
+  // banner said "your edits are safe here" and the very next click deleted them,
+  // with no undo and no history entry (the draft was never on disk to restore).
+  // It now does what the label promises — builds a merge buffer with the disk
+  // version on top and the unsaved text kept below a visible marker, so the user
+  // reconciles them by hand and nothing is destroyed. Fixed at this control
+  // because it is the only place a draft is discarded without being asked.
   const reload = $('#screen [data-notes-reload]'); if(reload) reload.onclick = async ()=>{
     const path = state.notes_selected; if(!path) return;
+    const draft = state.notes_draftBody || '';
     try{
       const rr = await api('/api/note?path='+encodeURIComponent(path));
       if(state.notes_selected===path && rr && typeof rr.content==='string'){
         state.notes_content = rr.content; state.notes_baseHash = rr.baseHash || null;
         const p = notesParseFrontmatter(rr.content);
-        state.notes_draftBlock = p.block; state.notes_draftBody = p.body;
+        // an empty draft, or one that already matches disk, needs no merge markers
+        const needsMerge = !!draft.trim() && draft.trim() !== p.body.trim();
+        state.notes_draftBlock = p.block;
+        state.notes_draftBody = needsMerge
+          ? p.body.replace(/\s+$/,'') + NOTES_MERGE_MARK + draft.replace(/^\s+/,'')
+          : p.body;
         state.notes_saveConflict = false; notesRenderAll();
+        announce(needsMerge ? 'disk version added above your unsaved text' : 'disk version loaded');
       }
     }catch(e){}
   };
@@ -2432,7 +2508,18 @@ async function renderNotes(){
     // Open the requested note directly — don't require it to be in the loaded list
     // (a deep-linked note can be beyond the 5000-item cap); notesLoadNote fetches
     // it by path and surfaces its own error if it truly can't be read.
-    if(target && target !== state.notes_selected) await notesLoadNote(target);
+    //
+    // But ask first, exactly as a tree click does. Leaving Notes mid-edit keeps
+    // notes_editing set, so coming back via an Ask source chip / Brain Map node /
+    // Health jump ran notesLoadNote straight away — it clears notes_editing and
+    // replaces the content, so the half-written draft was silently unreachable.
+    // Same guard as notesWireTree, for the same reason, in the one other place a
+    // note switch is initiated. A save in flight owns notes_content until it
+    // resolves, so a deep link waits rather than racing it.
+    const mayOpen = target && target !== state.notes_selected && !state.notes_saving
+      && (!state.notes_editing || confirm(t('Discard your unsaved changes to this note?','هل تريد تجاهل تغييراتك غير المحفوظة؟')));
+    if(mayOpen) await notesLoadNote(target);
+    else if(state.notes_flash === target) state.notes_flash = null; // don't flash a note we didn't open
   }
   if(state.notes_listError && !(state.notes_items||[]).length){
     scr.innerHTML = '<div style="margin-bottom:20px;animation:rise .4s ease both"><h1 style="font-family:var(--pixel);font-weight:700;font-size:42px;line-height:1.02">notes.</h1>'
@@ -2471,6 +2558,9 @@ const HEALTH_SEV_COL = { warn: 'var(--amber)', notice: 'var(--dust)', ok: 'var(-
 const HEALTH_SEV_RANK = { warn: 0, notice: 1, ok: 2 };
 const HEALTH_BADGE = { warn: 'needs you', notice: 'worth a look', ok: 'all good' };
 const healthPlural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+// server errors arrive both ways ("Connect a brain first." vs "request failed (500)"),
+// and these get glued in front of another sentence — don't run the two together.
+const healthErrText = e => { const s = String(e || '').trim(); return /[.!?]$/.test(s) ? s : (s + '.'); };
 
 // friendly card definitions, grouped by kind. Each group aggregates one or more
 // engine finding kinds; count comes from byKind, example paths from findings[].
@@ -2544,7 +2634,10 @@ async function healthRunCheck(){
   state.health_checking = true;
   busyCursor(true); // busy arrow for the run; cleared in the settle below
   state.health_pct = 0;
-  state.health_linkPreview = null; state.health_linking = null;  // stale after a re-check
+  // stale after a re-check — including a failed cleanup panel, which now survives
+  // its own flow (it used to be cleared unconditionally) and would otherwise sit
+  // there contradicting the fresh results behind it.
+  state.health_linkPreview = null; state.health_linking = null; state.health_cleanup = null;
   state.health_expanded = state.health_expanded || {};
   healthPaint(); // show the "running a full check" panel
   announce('running a full check…');
@@ -2908,6 +3001,14 @@ function healthConnectHTML(){
   if(state.health_linking === 'applying') return `<div style="margin-top:12px;border-top:1px solid var(--edge);padding-top:12px;font-family:var(--mono);font-size:13px;color:var(--dust)"><span style="color:var(--synapse)">›</span> adding links…</div>`;
   const pv = state.health_linkPreview; if(!pv) return '';
   const cancel = `<button data-hconnect-cancel="1" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;border:1px solid var(--edge2);color:var(--dust);background:transparent;padding:8px 14px;border-radius:0;cursor:pointer">close</button>`;
+  // A failed preview/apply reads as a FAILURE, never as a verdict. It used to
+  // collapse into the zero-result shape below, so a 500 rendered "nothing else
+  // mentions these by name" — a confident factual claim the app never established —
+  // right next to a button that permanently dismisses every real orphan.
+  if(pv.failed){
+    const retry = `<button data-hconnect="1" style="font-family:var(--mono);font-size:12px;letter-spacing:.03em;text-transform:uppercase;border:1px solid var(--synapse);color:var(--synapse-ink);background:transparent;padding:8px 14px;border-radius:0;cursor:pointer">try again</button>`;
+    return `<div role="alert" style="margin-top:12px;border-top:1px solid var(--edge);padding-top:12px;font-family:var(--mono);font-size:13px;color:var(--amber);line-height:1.6"><span style="margin-right:6px">⚠</span>${esc(pv.failed)}<div style="display:flex;gap:9px;margin-top:11px">${retry}${cancel}</div></div>`;
+  }
   if(!pv.links){
     // Nothing else in the vault mentions these notes by name, so there's nothing to
     // auto-link — which means they're legitimately standalone, not a problem. Offer
@@ -2936,16 +3037,37 @@ async function healthConnectPreview(){
   state.health_linking = 'preview'; state.health_linkPreview = null;
   if(state.health_expanded) state.health_expanded['orphans'] = false;  // preview replaces the list
   healthPaint();
-  try{ const r = await post('/api/link/preview', {}); state.health_linkPreview = (r && !r.error) ? r : { notes:0, links:0, orphanTotal:0, orphansConnected:0, sample:[] }; }
-  catch(e){ state.health_linkPreview = { notes:0, links:0, orphanTotal:0, orphansConnected:0, sample:[] }; }
+  // post() resolves on EVERY status and marks a non-2xx with .error, so a failure
+  // and a genuinely empty plan arrive as different objects — keep them different.
+  // Folding the failure into { links: 0 } is what turned a 500 into the "nothing
+  // to auto-link" verdict plus a dismiss-every-orphan button.
+  try{
+    const r = await post('/api/link/preview', {});
+    state.health_linkPreview = (r && r.error)
+      ? { failed: 'couldn’t work out what to connect — ' + healthErrText(r.error) + ' Nothing was changed.' }
+      : (r || { notes:0, links:0, orphanTotal:0, orphansConnected:0, sample:[] });
+  }
+  catch(e){ state.health_linkPreview = { failed: 'couldn’t work out what to connect — the local engine didn’t answer. Nothing was changed.' }; }
   state.health_linking = null;
   if(state.screen === 'health') healthPaint();
 }
 async function healthConnectApply(){
   if(state.health_linking) return;
   state.health_linking = 'applying'; healthPaint();
-  try{ await post('/api/link/apply', {}); }catch(e){}
-  state.health_linking = null; state.health_linkPreview = null;
+  // This POST edits notes. Throwing its response away reported a server-side
+  // failure as success: the panel closed, the re-check ran, and the unchanged
+  // orphan count looked like the fix simply hadn't helped.
+  let err = null;
+  try{ const r = await post('/api/link/apply', {}); if(r && r.error) err = r.error; }
+  catch(e){ err = 'the local engine didn’t answer.'; }
+  state.health_linking = null;
+  if(err){
+    state.health_linkPreview = { failed: 'the links didn’t finish applying — ' + healthErrText(err) + ' Some may already be in place; every edited note is backed up in ~/.callosium/backups.' };
+    announce('couldn’t add the links');
+    if(state.screen === 'health') healthPaint();
+    return;
+  }
+  state.health_linkPreview = null;
   healthRunCheck();   // re-check: the orphan count should drop
 }
 function healthConnectCancel(){ state.health_linking = null; state.health_linkPreview = null; if(state.screen === 'health') healthPaint(); }
@@ -2956,6 +3078,12 @@ function healthCleanupHTML(){
   const cancel = `<button data-hclean-cancel="1" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;border:1px solid var(--edge2);color:var(--dust);background:transparent;padding:8px 14px;border-radius:0;cursor:pointer">close</button>`;
   if(c.phase === 'preview') return `<div style="margin-top:12px;border-top:1px solid var(--edge);padding-top:12px;font-family:var(--mono);font-size:13px;color:var(--dust)"><span style="color:var(--synapse)">›</span> finding exact-duplicate copies that are safe to remove…</div>`;
   if(c.phase === 'applying') return `<div style="margin-top:12px;border-top:1px solid var(--edge);padding-top:12px;font-family:var(--mono);font-size:13px;color:var(--dust)"><span style="color:var(--synapse)">›</span> backing up, then removing the copies…</div>`;
+  // same honesty rule as the connect flow: a failed preview or apply is a failure,
+  // not the "nothing here is an exact duplicate" verdict the zero-result shape renders.
+  if(c.phase === 'failed'){
+    const retry = `<button data-hclean="${esc(c.kind||'')}" style="font-family:var(--mono);font-size:12px;letter-spacing:.03em;text-transform:uppercase;border:1px solid var(--synapse);color:var(--synapse-ink);background:transparent;padding:8px 14px;border-radius:0;cursor:pointer">try again</button>`;
+    return `<div role="alert" style="margin-top:12px;border-top:1px solid var(--edge);padding-top:12px;font-family:var(--mono);font-size:13px;color:var(--amber);line-height:1.6"><span style="margin-right:6px">⚠</span>${esc(c.error||'')}<div style="display:flex;gap:9px;margin-top:11px">${retry}${cancel}</div></div>`;
+  }
   const d = c.data || { groups:[], files:0, bytes:0, diverged:[] };
   // Conflict copies that DIVERGED from their original are never auto-deleted (they hold edits the
   // original doesn't) — tell the owner so they can merge them by hand instead of assuming they're gone.
@@ -2982,18 +3110,37 @@ function healthCleanupHTML(){
     </div>`;
 }
 async function healthCleanPreview(kind){
-  if(state.health_cleanup) return;
+  // a FAILED flow stays on screen with a "try again" button, so it must not read
+  // as "a cleanup is already running" when the owner taps that button.
+  if(state.health_cleanup && state.health_cleanup.phase !== 'failed') return;
   state.health_cleanup = { kind, phase:'preview', data:null };
   if(state.health_expanded) state.health_expanded[kind==='sync'?'sync':'dupes'] = false;
   healthPaint();
-  try{ const r = await post('/api/cleanup/preview?kind='+encodeURIComponent(kind), {}); state.health_cleanup = { kind, phase:'ready', data:(r && !r.error) ? r : { groups:[], files:0, bytes:0 } }; }
-  catch(e){ state.health_cleanup = { kind, phase:'ready', data:{ groups:[], files:0, bytes:0 } }; }
+  try{
+    const r = await post('/api/cleanup/preview?kind='+encodeURIComponent(kind), {});
+    state.health_cleanup = (r && r.error)
+      ? { kind, phase:'failed', error: 'couldn’t look for duplicate copies — ' + healthErrText(r.error) + ' Nothing was removed.' }
+      : { kind, phase:'ready', data: r || { groups:[], files:0, bytes:0 } };
+  }
+  catch(e){ state.health_cleanup = { kind, phase:'failed', error: 'couldn’t look for duplicate copies — the local engine didn’t answer. Nothing was removed.' }; }
   if(state.screen === 'health') healthPaint();
 }
 async function healthCleanApply(kind){
   if(!state.health_cleanup) return;
+  const k = kind || state.health_cleanup.kind;
   state.health_cleanup.phase = 'applying'; healthPaint();
-  try{ await post('/api/cleanup/apply?kind='+encodeURIComponent(kind||''), {}); }catch(e){}
+  // This POST DELETES files. Discarding its response reported a server-side
+  // failure as success — the panel closed and the re-check's unchanged duplicate
+  // count was the only (silent) hint that nothing had happened.
+  let err = null;
+  try{ const r = await post('/api/cleanup/apply?kind='+encodeURIComponent(k||''), {}); if(r && r.error) err = r.error; }
+  catch(e){ err = 'the local engine didn’t answer.'; }
+  if(err){
+    state.health_cleanup = { kind:k, phase:'failed', error: 'the cleanup didn’t finish — ' + healthErrText(err) + ' Some copies may already be gone; every removed file is backed up in ~/.callosium/backups.' };
+    announce('cleanup didn’t finish');
+    if(state.screen === 'health') healthPaint();
+    return;
+  }
   state.health_cleanup = null;
   healthRunCheck();   // re-check: the duplicate/conflict count should drop
 }
@@ -3354,7 +3501,12 @@ async function akSend(q){
     });
     announce('not in your brain');
   }
-  renderAsk();
+  // A slow recall must not paint Ask over whatever screen the user has since
+  // navigated to — recall can take seconds, and leaving for Notes/Brain Map mid-
+  // search used to have the Ask thread drop on top of it out of nowhere. The
+  // answer is already in state.ak_thread, so it's all there when they come back
+  // (akLoadSuggestions guards its own late render the same way).
+  if(state.screen==='ask') renderAsk();
 }
 
 // ===================== settings =====================
@@ -3924,6 +4076,7 @@ function map_teardown(){
   state.map_return = null;
   state.map_pulses = [];
   state.map_fly = null; state.map_gesture = false;
+  if(state.map_settleT){ clearTimeout(state.map_settleT); state.map_settleT = null; }
   if(state.map_resizeT){ clearTimeout(state.map_resizeT); state.map_resizeT = null; }
   if(state.map_gestureT){ clearTimeout(state.map_gestureT); state.map_gestureT = null; }
   if(state.map_resize){ removeEventListener('resize', state.map_resize); state.map_resize = null; }
@@ -4203,13 +4356,11 @@ async function map_load(){
   };
   document.addEventListener('visibilitychange', state.map_vis);
 
-  // first frame: reduced motion settles synchronously and draws once. Otherwise
-  // a time-boxed synchronous pre-roll organizes the map before first paint
-  // (~350ms budget), and any leftover cooling animates after.
+  // first frame: reduced motion settles in yielding slices and draws once.
+  // Otherwise a time-boxed synchronous pre-roll organizes the map before first
+  // paint (~350ms budget), and any leftover cooling animates after.
   if(window.__reduceMotion){
-    map_simulate(true);
-    map_afterSettle(true);
-    state.map_perf.presentMs = state.map_perf.settleMs;
+    map_settleQuiet(gen);
   } else {
     const deadline = t0 + MAP_PREROLL_MS;
     while(state.map_alpha > 0 && performance.now() < deadline){ map_simulate(false, 8); }
@@ -4225,6 +4376,34 @@ async function map_load(){
     state.map_perf.presentMs = Math.round(performance.now() - t0);
     map_wake();
   }
+}
+
+// Reduced motion still wants ONE settled frame and no animation — but running the
+// whole cooling schedule (~180 ticks) in a single synchronous call blocked the main
+// thread for as long as the layout took: measured 1.7s at 1,500 notes and 7.0s at
+// 4,000, during which the tab was frozen — no scrolling, no nav, no Escape. Reduce
+// motion is an accessibility setting, so it was handing its users the worst
+// experience on the screen. Same ticks, same deterministic result, run in ~24ms
+// slices that yield to the event loop between them. The loading overlay is held up
+// until it's done, so a half-settled layout is never shown: still zero motion.
+const MAP_SLICE_MS = 24;
+function map_settleQuiet(gen){
+  map_showOverlay('loading');
+  const step = ()=>{
+    state.map_settleT = null;
+    if(state.screen !== 'map' || gen !== state.map_gen) return;   // navigated away or superseded
+    const until = performance.now() + MAP_SLICE_MS;
+    // ONE tick per deadline check: a tick is the granularity floor, and on a big
+    // brain a single tick already costs tens of ms, so batching them (the pre-roll
+    // uses 8) blew straight past the budget — measured 496ms slices at 4k notes.
+    // map_simulate zeroes the alpha once the sim is cold, so this always terminates.
+    while(state.map_alpha > 0 && performance.now() < until) map_simulate(false, 1);
+    if(state.map_alpha > 0){ state.map_settleT = setTimeout(step, 0); return; }
+    map_showOverlay('none');
+    map_afterSettle(true);
+    state.map_perf.presentMs = state.map_perf.settleMs;
+  };
+  state.map_settleT = setTimeout(step, 0);
 }
 
 function map_sizeCanvas(cv){
@@ -4398,9 +4577,10 @@ function map_tick(alpha){
   return maxV;
 }
 
-// run the sim. full=true: cool all the way to rest synchronously (reduced
-// motion). Otherwise run `ticks` ticks with the live alpha (pre-roll chunk or
-// one frame step).
+// run the sim. full=true: cool all the way to rest in one synchronous call (kept
+// for a caller that can afford to block; the reduced-motion path no longer can —
+// see map_settleQuiet). Otherwise run `ticks` ticks with the live alpha (pre-roll
+// chunk, settle slice, or one frame step).
 function map_simulate(full, ticks){
   const G = state.map_graph; if(!G) return 0;
   let maxV = 0, n = 0;
@@ -5390,6 +5570,12 @@ function ob_startBrain(){
         P.push({px,py,z,lum,cal,sec,sw:sw2,phase:ob_hash(P.length)*6.28});
       }
       pts=P; state.ob_pts=P;
+      // /assets/brain.png lands AFTER the single synchronous draw() below. With the
+      // rotation interval running that self-corrects within 85ms — but under
+      // reduce-motion there IS no interval, so the hero sat on the "waking the
+      // cortex…" placeholder forever and the signature brain never appeared at all.
+      // Paint the settled frame the moment the points exist.
+      draw();
     };
     img.onerror=()=>{ /* offline / missing asset — the caption still welcomes */ };
     img.src='/assets/brain.png';

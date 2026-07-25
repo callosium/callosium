@@ -58,7 +58,13 @@ function positional(after: number): string[] {
     const a = argv[i];
     if (a.startsWith('--')) {
       const name = a.slice(2);
-      if (name in KNOWN_FLAGS) {
+      // hasOwn, not `in`: `in` also matches everything on Object.prototype, so
+      // "--constructor" / "--toString" / "--__proto__" looked like known flags —
+      // and since their prototype values are truthy, the branch below ate the
+      // NEXT word too. `callosium recall --constructor pricing` came back
+      // "Usage: callosium recall "question"" with the whole question gone. Only
+      // the flags we actually declare above may swallow anything.
+      if (Object.hasOwn(KNOWN_FLAGS, name)) {
         if (KNOWN_FLAGS[name]) i++; // skip this flag's value too
         continue;
       }
@@ -89,12 +95,26 @@ async function main() {
     case 'serve':
     case 'dashboard': {
       const brainArg = flag('brain');
+      // serveDashboard treats an unreachable --brain as "no --brain given" and
+      // silently reconnects the LAST brain it served (its persisted config), so a
+      // typo'd or not-yet-mounted path opened a DIFFERENT brain — the owner then
+      // reads, edits and lets agents write into the wrong one, believing the flag
+      // took. Refuse here, at the point the owner stated an intent: no dashboard
+      // at all is a far cheaper failure than the wrong brain.
+      let brain: string | undefined;
+      if (argv.includes('--brain')) {
+        if (!brainArg) throw new Error('--brain needs a path: callosium serve --brain <path>');
+        brain = path.resolve(brainArg);
+        const st = await fs.stat(brain).catch(() => null);
+        if (!st) throw new Error(`No brain at ${brain} — check the path, or run 'callosium init ${brainArg}' to create one there.`);
+        if (!st.isDirectory()) throw new Error(`--brain must point at a brain folder, but ${brain} is a file.`);
+      }
       let port: number | undefined;
       if (flag('port')) {
         port = Number(flag('port'));
         if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('--port must be an integer between 1 and 65535');
       }
-      await serveDashboard({ brain: brainArg ? path.resolve(brainArg) : undefined, port });
+      await serveDashboard({ brain, port });
       // keep the process alive to serve the dashboard
       await new Promise(() => {});
       break;

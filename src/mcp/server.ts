@@ -208,13 +208,56 @@ export async function serve(opts: ServeOptions): Promise<void> {
   console.error(`callosium mcp: serving "${vault.root}" to agent "${agent.id}" (${agent.displayName})`);
 }
 
+// ── version-history snapshot barrier (per note path) ──────────────────────
+// snapshotNote() commits whatever bytes are ON DISK when it finally runs, so a
+// fire-and-forget snapshot is only correct while the note still holds the version it
+// was fired for. Two writes to the SAME note in quick succession broke that: write #2
+// landed before snapshot #1 reached git.add, so #1 committed #2's content under #1's
+// author and #2 then found the note 'unmodified' and recorded nothing. Measured on a
+// two-agent HTTP session (A appends, B appends): History showed ONE version, authored
+// "Agent A", containing agent B's text — the intermediate version was unrecoverable
+// and the surviving one named the wrong agent.
+// The snapshot deliberately stays OFF the write's critical path, so the fix is a
+// barrier rather than an await: register each snapshot per note path, and make the
+// next writer of THAT path wait for it before changing the bytes underneath it.
+// Module-level like vault.ts's vaultLocks — serveHttp builds a server per REQUEST, so
+// a per-server map would never see the second agent, which is exactly the case that
+// mis-attributes.
+const pendingVersions = new Map<string, Promise<unknown>>();
+/** The same key derivation vault.withLock uses, so the barrier and the write lock
+ *  agree on what "the same note" is across Vault instances and path spellings. */
+function versionKey(vault: Vault, rel: string): string {
+  let canon: string;
+  try {
+    canon = vault.abs(rel);
+  } catch {
+    canon = rel;
+  }
+  return process.platform === 'linux' ? canon : canon.toLowerCase();
+}
+/** Wait for any in-flight snapshot of this note. Call INSIDE the note's write lock,
+ *  immediately before its bytes change. Never throws — history stays best-effort. */
+async function settleVersion(vault: Vault, rel: string): Promise<void> {
+  const p = pendingVersions.get(versionKey(vault, rel));
+  if (p) await p.catch(() => {});
+}
+
 /** Build the MCP server with all tools closing over an ALREADY-authenticated
  *  agent, WITHOUT a transport — reused by the stdio serve() above and the HTTP
  *  serveHttp() below. The caller owns authentication and (for stdio) scope-sync. */
 // Repoint every [[wikilink]] that pointed at a note being moved/renamed, so a rename never
 // leaves dangling links. Matches the target by basename OR full path (case-insensitive),
-// preserving any |alias or #heading. Returns the paths of the notes it rewrote.
-export async function repointWikilinks(vault: Vault, agent: AgentIdentity, from: string, to: string): Promise<string[]> {
+// preserving any |alias or #heading.
+// Returns BOTH halves of the truth: `changed` = the notes it rewrote, `skipped` = the notes it
+// could NOT rewrite (outside the agent's write scope) that really do still link to the old path.
+// move_note used to report only `changed` and then claim it had fixed everything "across the
+// brain" — with a scoped agent that was a success message over genuinely dangling links.
+export async function repointWikilinks(
+  vault: Vault,
+  agent: AgentIdentity,
+  from: string,
+  to: string,
+): Promise<{ changed: string[]; skipped: string[] }> {
   // Normalize to forward-slash so the string logic below matches vault.listNotes()' disk-canonical
   // paths even if the caller passed OS-native backslashes (base()/the path compares split on '/').
   from = from.replace(/\\/g, '/');
@@ -233,10 +276,32 @@ export async function repointWikilinks(vault: Vault, agent: AgentIdentity, from:
   // letter-case, a raw !== would leave the note counting against its own basename and disable bareOk.
   const bareOk = !all.some((n) => n.toLowerCase() !== to.toLowerCase() && base(n).toLowerCase() === oldBase);
   const WL = /\[\[([^\]|#]+)([#|][^\]]*)?\]\]/g;
+  const repoint = (raw: string): string =>
+    raw.replace(WL, (m: string, target: string, rest = '') => {
+      const t = target.trim().replace(/\.md$/i, '').toLowerCase(); // tolerate a [[Old.md]] suffix form
+      if (t === oldPath) return `[[${newPath}${rest || ''}]]`;
+      if (bareOk && t === oldBase) return `[[${newBase}${rest || ''}]]`;
+      return m;
+    });
   const changed: string[] = [];
+  const skipped: string[] = [];
   for (const p of all) {
     if (p === from) continue; // old path is gone; the moved note (now `to`) IS scanned to fix its self-links
-    if (!canWrite(agent, p)) continue; // NEVER write a note outside the calling agent's write scope
+    if (!canWrite(agent, p)) {
+      // NEVER write a note outside the calling agent's write scope — but do not pretend it
+      // was repointed either. Read it (server-side only; the content never leaves this
+      // function) purely to find out whether it genuinely still points at the old path, so
+      // move_note can name what it left behind instead of over-claiming. System/ artifacts
+      // are excluded: those are Callosium's own derived files and get regenerated.
+      if (isReservedPath(p)) continue;
+      try {
+        const raw = await vault.readFileRetry(p);
+        if (repoint(raw) !== raw) skipped.push(p);
+      } catch {
+        /* unreadable right now — nothing we can honestly say about it either way */
+      }
+      continue;
+    }
     // read-modify-write under the per-note lock (CAS), like every other write tool, so a concurrent
     // append_note to a note we also repoint can't be clobbered.
     const wrote = await vault.withLock(p, async () => {
@@ -246,13 +311,9 @@ export async function repointWikilinks(vault: Vault, agent: AgentIdentity, from:
       } catch {
         return false;
       }
-      const out = raw.replace(WL, (m: string, target: string, rest = '') => {
-        const t = target.trim().replace(/\.md$/i, '').toLowerCase(); // tolerate a [[Old.md]] suffix form
-        if (t === oldPath) return `[[${newPath}${rest || ''}]]`;
-        if (bareOk && t === oldBase) return `[[${newBase}${rest || ''}]]`;
-        return m;
-      });
+      const out = repoint(raw);
       if (out !== raw) {
+        await settleVersion(vault, p); // snapshot barrier — see version() in buildServer
         await vault.writeFile(p, out);
         return true;
       }
@@ -260,7 +321,7 @@ export async function repointWikilinks(vault: Vault, agent: AgentIdentity, from:
     });
     if (wrote) changed.push(p);
   }
-  return changed;
+  return { changed, skipped };
 }
 
 /** Mutable per-brain retrieval cache. Shared across serveHttp's per-request
@@ -456,15 +517,28 @@ const ensuredBrains = new Set<string>();
 async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSchema, source?: BrainSource): Promise<McpServer> {
   // Version history (external-write safety net): stamp each of this agent's writes into the
   // shadow-git store so every version is recoverable and attributed. ensureHistory lays the
-  // baseline at connect; version() is fire-and-forget so it never adds write latency (a failed
-  // or skipped snapshot is still caught by the dashboard's re-index captureExternal pass).
+  // baseline at connect; version() is still fire-and-forget so it never adds write latency (a
+  // failed or skipped snapshot is still caught by the dashboard's re-index captureExternal
+  // pass) — only the NEXT write to the SAME note waits for it, via the snapshot barrier above.
   const brainId = Vault.contentHash(vault.root.toLowerCase());
   if (!ensuredBrains.has(brainId)) {
     ensuredBrains.add(brainId);
     void ensureHistory(vault.root, brainId).catch(() => ensuredBrains.delete(brainId));
   }
   const version = (rel: string): void => {
-    void snapshotNote(vault.root, brainId, rel, agent.displayName).catch(() => {});
+    // Chain per NOTE PATH: the shadow repo's own lock is per BRAIN, so it orders the
+    // commits but says nothing about which bytes each one is about to read off disk.
+    // The chain gives settleVersion() a single promise to wait on, and guarantees two
+    // snapshots of one note commit in write order with each agent on its own version.
+    const key = versionKey(vault, rel);
+    const next = (pendingVersions.get(key) ?? Promise.resolve())
+      .then(() => snapshotNote(vault.root, brainId, rel, agent.displayName))
+      .catch(() => {});
+    pendingVersions.set(key, next);
+    // Drop the entry once it is the tail, so this never grows one key per note written.
+    void next.then(() => {
+      if (pendingVersions.get(key) === next) pendingVersions.delete(key);
+    });
   };
   // Activity log: record THIS agent's action (read/write/append/archive/move/recall/remember) in the
   // per-brain audit trail the dashboard's "recent activity" reads. Fire-and-forget like version() —
@@ -963,6 +1037,15 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
   // cap it lists the remaining notes' paths + sizes instead of their bodies, so
   // the caller can fetch_document the sub-folders. Never a hard filter, never
   // lossy silently — it always tells you exactly what it did and didn't include.
+  //
+  // A budget is only a guard if it has BOTH ends. maxChars had a floor (min 1000)
+  // and no ceiling, so one call with maxChars: 50_000_000 defeated it entirely and
+  // read EVERY readable note under the folder off disk into a single reply string —
+  // measured: a 10-note folder came back as one 385k-char response with nothing
+  // deferred. Clamp rather than reject (an agent asking for "everything" should get
+  // as much as is sane, not an error) and say so in the header, because this tool's
+  // contract is that it never quietly gives you less than it claims.
+  const MAX_FETCH_CHARS = 400_000; // ~100k tokens; past this, fetch the sub-folders
   server.registerTool(
     'fetch_document',
     {
@@ -971,11 +1054,12 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
         'Return the FULL text of a note, or of EVERY note under a folder, concatenated in path order — for rewriting/editing a complete document that may span several files. Pass a note path for one whole note, or a folder path for the whole folder. Large results are capped: notes past the character budget are listed (path + size) instead of inlined, so fetch a sub-folder for those. Use this over read_note when you need everything, not a section.',
       inputSchema: {
         path: z.string().describe('A note path (whole note) or a folder path (every note under it).'),
-        maxChars: z.number().int().min(1000).optional().describe('Total character budget for inlined bodies (default 60000). Notes past it are listed, not inlined.'),
+        maxChars: z.number().int().min(1000).optional().describe('Total character budget for inlined bodies (default 60000, capped at 400000). Notes past it are listed, not inlined.'),
       },
     },
     async ({ path: p, maxChars }) => {
-      const budget = maxChars ?? 60000;
+      const asked = maxChars ?? 60000;
+      const budget = Math.min(asked, MAX_FETCH_CHARS);
       // Only translate backslashes for the scope check — do NOT strip a leading
       // slash first (that would defeat canRead's hard-deny on absolute paths and
       // diverge from read_note, which validates the raw path). canRead/readFile
@@ -1044,6 +1128,7 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
       head += deferred.length
         ? `, ${deferred.length} deferred (over the ${budget}-char budget). Fetch these individually or fetch their sub-folder:]\n${deferred.join('\n')}\n`
         : `.]`;
+      if (asked > budget) head += `\n(maxChars ${asked} is above the ${MAX_FETCH_CHARS}-char per-call ceiling, so ${budget} was used — fetch the sub-folders for anything deferred.)`;
       // Folder read: log the folder as DETAIL, not path — a trailing-slash path yields a name-less,
       // mis-clickable activity-feed row (the note-jump has no note to open).
       act('read', undefined, norm ? `${norm}/` : '(root)');
@@ -1177,6 +1262,9 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
         if (note.frontmatter.created_by === undefined) delete note.frontmatter.created_by;
         note.frontmatter.updated_by = agent.displayName;
         note.frontmatter.updated = isoDate();
+        // Let this note's previous snapshot finish before we change the bytes it is
+        // about to read, so its version isn't overwritten by ours (snapshot barrier).
+        await settleVersion(vault, target!);
         await vault.writeFile(target!, serializeNote(note));
         version(target!);
         act('write', target!);
@@ -1306,6 +1394,7 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
         }
         note.frontmatter.updated_by = agent.displayName;
         note.frontmatter.updated = isoDate();
+        await settleVersion(vault, path); // snapshot barrier — see version() above
         await vault.writeFile(path, serializeNote(note));
         version(path);
       });
@@ -1341,6 +1430,7 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
         note.frontmatter.archived_reason = reason;
         note.frontmatter.updated_by = agent.displayName;
         note.frontmatter.updated = isoDate();
+        await settleVersion(vault, path); // snapshot barrier — see version() above
         await vault.writeFile(path, serializeNote(note));
         version(path);
       });
@@ -1355,7 +1445,7 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
     {
       title: 'Move or rename a note',
       description:
-        'Rename or move a note to a new path AND repoint every [[wikilink]] that pointed at it, so nothing breaks. Both the old and new locations must be within your write scope; refuses to overwrite an existing note. Every change is versioned (undoable).',
+        'Rename or move a note to a new path AND repoint the [[wikilinks]] that pointed at it, so nothing breaks. Both the old and new locations must be within your write scope; refuses to overwrite an existing note. Notes outside your write scope cannot be rewritten — any that still link to the old path are listed back to you rather than left silently dangling. Every change is versioned (undoable).',
       inputSchema: {
         from: z.string().describe('current note path, e.g. "People/Bob.md"'),
         to: z.string().describe('new note path, include the .md, e.g. "People/Robert.md"'),
@@ -1406,25 +1496,37 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
       await vault.withLock(lo, () =>
         vault.withLock(hi, async () => {
           if (vault.exists(to)) throw new Error(`Already exists: ${to} — move refused so nothing is overwritten. Pick a different name.`);
+          // Snapshot barrier on BOTH ends (see version() above): a pending snapshot of
+          // `from` must land before we delete it, or that version is lost outright.
+          await settleVersion(vault, from);
+          await settleVersion(vault, to);
           raw = await vault.readFileRetry(from);
           await vault.writeFile(to, raw);
           await vault.deleteFile(from);
         }),
       );
-      const changed = await repointWikilinks(vault, agent, from, to);
+      const { changed, skipped } = await repointWikilinks(vault, agent, from, to);
       version(to);
       version(from); // record the deletion of the old path in history
       for (const p of changed) version(p);
       act('move', to, from);
       invalidate();
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Moved ${from} → ${to}; repointed ${changed.length} link${changed.length === 1 ? '' : 's'} across the brain. All changes versioned (undoable).`,
-          },
-        ],
-      };
+      // Report what was actually done. The old wording ("repointed N links across the
+      // brain") was true only for a full-scope agent: repointWikilinks silently skips
+      // every note outside the caller's WRITE scope, so a scoped agent got a success
+      // message while real links were left dangling. Name the leftovers it may read;
+      // for the rest give a count only — naming a note outside its READ scope would
+      // disclose that the note exists, which nothing else in this server does.
+      const nameable = skipped.filter((p) => canRead(agent, p));
+      const unnameable = skipped.length - nameable.length;
+      let text = `Moved ${from} → ${to}; repointed the links in ${changed.length} note${changed.length === 1 ? '' : 's'}. All changes versioned (undoable).`;
+      if (skipped.length) {
+        text +=
+          `\nNOT repointed: ${skipped.length} note${skipped.length === 1 ? '' : 's'} outside your write scope still link${skipped.length === 1 ? 's' : ''} to "${from}", so ${skipped.length === 1 ? 'that link is' : 'those links are'} now dangling. Ask the owner (or an agent with a wider scope) to fix ${skipped.length === 1 ? 'it' : 'them'}.` +
+          (nameable.length ? ` Affected: ${nameable.join(', ')}.` : '') +
+          (unnameable ? ` ${unnameable} more ${unnameable === 1 ? 'is' : 'are'} outside your read scope and cannot be named here.` : '');
+      }
+      return { content: [{ type: 'text', text }] };
     },
   );
 
@@ -1495,6 +1597,7 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
           body: `\n# ${title}\n\n${defangAttribution(text)}\n`,
           rawFile: false,
         };
+        await settleVersion(vault, route.path); // snapshot barrier — see version() above
         await vault.writeFile(route.path, serializeNote(note));
         version(route.path);
       });

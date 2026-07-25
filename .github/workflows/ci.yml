@@ -38,6 +38,8 @@ jobs:
       - run: npm test
       # package smoke — install the packed tarball into a clean dir and run the
       # real user flow: init a brain, write a note, recall it with evidence.
+      # --ignore-scripts keeps this gate fast and hermetic; the consumer-install
+      # job below is the one that runs the install a stranger actually gets.
       - name: pack smoke
         shell: bash
         run: |
@@ -50,3 +52,56 @@ jobs:
           printf 'the zephyr project deadline is 22 August, budget 40000 QAR\n' > "brain/Inbox/zephyr project.md"
           npx callosium recall "zephyr deadline" --brain brain | grep -q "zephyr project.md"
           echo "pack smoke OK"
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: tarball
+          path: callosium-*.tgz
+          retention-days: 5
+
+  # The install a stranger actually gets: no --ignore-scripts, no skip env, no
+  # cache. Everything above this line installs Callosium in a way no user ever
+  # will, so until this job existed nothing proved `npm i callosium` works at
+  # all — the postinstall of a transitive dep could fail on every machine on
+  # earth and CI would still be green.
+  #
+  # It is also the only place the true install cost is visible. onnxruntime-node
+  # declares a cuda12 requirement on linux/x64 (and ONLY there — win32, darwin
+  # and linux/arm64 pull nothing), so a default install on a Linux box fetches
+  # GPU provider blobs from nuget.org that Callosium never loads: inference here
+  # is CPU-only. The step prints the elapsed time and the installed size so a
+  # regression in either shows up in the log instead of in a user's bandwidth.
+  consumer-install:
+    needs: build-test-pack
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v4
+        with:
+          name: tarball
+      - name: install as a user would
+        shell: bash
+        run: |
+          set -e
+          mkdir consumer && cd consumer
+          npm init -y > /dev/null
+          start=$(date +%s)
+          npm install "$(ls ../callosium-*.tgz)"
+          echo "install took $(( $(date +%s) - start ))s"
+          du -sh node_modules 2>/dev/null || true
+      - name: run as a user would
+        shell: bash
+        working-directory: consumer
+        run: |
+          set -e
+          npx callosium init brain
+          printf 'the zephyr project deadline is 22 August, budget 40000 QAR\n' > "brain/Inbox/zephyr project.md"
+          npx callosium recall "zephyr deadline" --brain brain | grep -q "zephyr project.md"
+          echo "consumer install OK"

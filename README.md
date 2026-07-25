@@ -25,6 +25,12 @@ At the end, the dashboard generates the exact config for your AI — Claude, Cur
 
 > First run downloads Callosium's language model (~120MB, one time) so meaning-based search works in English and Arabic — fully offline after that. No internet on first run? Everything still works — keyword recall needs no model, and the smarter search switches itself on once the model is in place.
 
+> **On Linux:** installing pulls in GPU add-ons for the search library that Callosium never uses (it runs on the CPU everywhere). Skip them and the install is much smaller and faster:
+> ```bash
+> ONNXRUNTIME_NODE_INSTALL=skip npm install -g callosium
+> ```
+> Nothing is lost by skipping. Windows and macOS aren't affected.
+
 ## What your AI can do once connected
 
 - **Ask before answering** — `recall` returns the right notes with the exact matching lines cited, in ~40ms. If the answer isn't in your notes, it says so — it never invents.
@@ -38,7 +44,7 @@ Plenty of tools can point an AI at a folder of Markdown. What sets Callosium apa
 
 - **It's measured, not asserted.** A 10,000-question benchmark ships in this repo — run it against your own brain. Most "AI memory" is graded by the vendor that sells it; this you can check yourself.
 - **Every AI, scoped and attributed.** Connect Claude, Cursor, ChatGPT-compatible apps and more to the *same* brain. Each write is stamped with *which* AI made it (unforgeable, server-side), and you decide per-AI what each one may even see.
-- **Nothing gets lost — whoever edits it.** Every note is versioned automatically: whether an AI wrote it through Callosium or you edited the file yourself in Obsidian, the change is captured and one click away from being undone.
+- **Nothing gets lost — whoever edits it.** Every note is versioned automatically: whether an AI wrote it through Callosium or you edited the file yourself in Obsidian, the change is captured and one click away from being undone. (The last 20,000 versions are kept — years of normal use, about 18MB. `CALLOSIUM_HISTORY_KEEP` raises it.)
 - **No terminal to live in.** A local dashboard runs onboarding, the connection config for each AI, health checks, and search — not a command line.
 - **Bilingual by design.** Meaning-based recall works in English *and* Arabic, out of the box.
 - **Actually yours.** Plain files on your own disk. No database, no cloud, no account. Uninstall tomorrow and your notes are still just… notes.

@@ -19,6 +19,16 @@ test/scenarios-v2.json
 test/stress-failures.json
 test/.fixture-brain/
 test/.fixture-structure/
+# Any fixture/scratch dir or file a debugging session leaves behind. Named ones
+# kept being added here one at a time and the next session invented a new name,
+# so a `git add -A` was always one forgotten line away from committing a tree
+# built out of the real vault. Glob it instead of chasing it.
+test/.fixture-*/
+test/.tmp-*/
+test/tmp-*
+test/_repro-*
+test/_probe*
+test/_tmp-*
 test/judge/
 test/gold/
 test/gbrain-headtohead.md

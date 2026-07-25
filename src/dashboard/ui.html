@@ -300,8 +300,21 @@ const $$ = s => [...document.querySelectorAll(s)];
 // can't set headers) appends it as ?token= via CCT_Q below.
 const CCT = (document.querySelector('meta[name="cct"]')||{}).content || '';
 const CCT_Q = url => url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(CCT);
-const api = p => fetch(p,{headers:{'x-callosium-token':CCT}}).then(r=>r.json());
-const post = (p,b) => fetch(p,{method:'POST',headers:{'content-type':'application/json','x-callosium-token':CCT},body:JSON.stringify(b||{})}).then(r=>r.json());
+// Both resolve on EVERY status on purpose: dozens of call sites read a server error
+// body ({error}) from a 4xx, and making these throw would change all of them. What they
+// must never do is let a failure be mistaken for DATA — .json() on a 500 body yielded a
+// perfectly ordinary object, so loadAccount/loadOverview recorded "no account"/"no
+// brain" and boot() dropped an already-onboarded user into the welcome flow on a
+// transient blip. A non-2xx now always carries .error AND .httpStatus, so a caller can
+// tell "the server said no" from "the request failed", and a body that is not JSON at
+// all (a proxy's HTML error page) degrades to the same shape instead of throwing.
+const httpResult = async r => {
+  const d = await r.json().catch(() => ({}));
+  const o = (d && typeof d === 'object') ? d : { value: d };
+  return r.ok ? o : Object.assign(o, { error: o.error || ('request failed (' + r.status + ')'), httpStatus: r.status });
+};
+const api = p => fetch(p,{headers:{'x-callosium-token':CCT}}).then(httpResult);
+const post = (p,b) => fetch(p,{method:'POST',headers:{'content-type':'application/json','x-callosium-token':CCT},body:JSON.stringify(b||{})}).then(httpResult);
 
 // ── a11y: one polite live region for the whole app (#srLive in the shell) ──
 // Terse, lowercase mono voice. The zero-width flip forces a text mutation so a
@@ -589,6 +602,9 @@ function callosiumGuideWire(root, spec, rerender){
 async function loadOverview(){
   try{
     const o = await api('/api/overview');
+    // A failed request is NOT "this user has no brain yet". Without this, a 500 read as
+    // onboarded=false and boot() restarted onboarding for a set-up user.
+    if(o && o.httpStatus){ state.overviewFailed = true; return; }
     state.overview = o; state.overviewFailed = false;
     if(!o.onboarded){ return; } // boot() decides whether to show onboarding
     const v = o.vitals||{};
@@ -6374,7 +6390,7 @@ function coach_onResize(){
 
 // ── boot ──
 // ── account + onboarding gating ──
-async function loadAccount(){ try{ const r=await api('/api/account'); state.account = r && r.account || null; state.accountFailed=false; }catch(e){ state.account=null; state.accountFailed=true; } }
+async function loadAccount(){ try{ const r=await api('/api/account'); if(r && r.httpStatus){ state.account=null; state.accountFailed=true; return; } state.account = r && r.account || null; state.accountFailed=false; }catch(e){ state.account=null; state.accountFailed=true; } }
 function hasBrain(){ return !!(state.overview && state.overview.onboarded); }
 function showOnboard(phase){
   state.onboardPhase = phase;

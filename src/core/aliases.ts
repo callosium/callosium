@@ -71,9 +71,22 @@ function splitFlow(fm: string, i: number): string[] | null {
     if (quote) {
       // Inside a double-quoted scalar a backslash escapes the next char (our
       // serializer emits \" and \\), so it must not be read as the closing quote.
-      // A single-quoted scalar's '' escape needs nothing: the toggle re-opens.
       if (c === '\\' && quote === '"') {
         cur += c + (fm[i + 1] ?? '');
+        i++;
+        continue;
+      }
+      // YAML's '' escape inside a single-quoted scalar. This USED to need no handling: a quote
+      // could re-open anywhere, so the toggle closed on the first ' and reopened on the second.
+      // Adding the start-of-item rule below (a quote only quotes at the START of a flow node, so an
+      // apostrophe in O'Brien stays literal) removed that second toggle — `cur` is no longer empty
+      // by then — so the escape's first quote CLOSED the scalar and everything after it was scanned
+      // unquoted. `['O''Brien, Ltd', Bobby]` split at the comma inside the alias and produced two
+      // phantom aliases carrying literal quote characters. That is the same class of bug as the
+      // original comma split, and it reaches the WRITE path: these names drive auto-link and
+      // write_note's entity dedup.
+      if (c === "'" && quote === "'" && fm[i + 1] === "'") {
+        cur += "''";
         i++;
         continue;
       }

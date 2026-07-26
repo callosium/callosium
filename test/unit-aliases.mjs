@@ -60,6 +60,14 @@ eq('a literal apostrophe and a real quoted scalar coexist',
   aliasesOf("---\naliases: [Dad's, 'x, y']\n---\n"), ["Dad's", 'x, y']);
 eq("YAML's '' escape inside a properly quoted scalar still unescapes",
   aliasesOf("---\naliases: ['O''Brien', Bobby]\n---\n"), ["O'Brien", 'Bobby']);
+// …and the escape must survive the start-of-item rule that fixed the apostrophe case. It did not:
+// the escape's FIRST quote closed the scalar (the second could no longer re-open it, since `cur`
+// was non-empty), so everything after was scanned unquoted and a comma or ']' inside the alias
+// split the list. The case above hid it because its comma falls AFTER the closing quote.
+eq("the '' escape with a comma INSIDE the same scalar",
+  aliasesOf("---\naliases: ['O''Brien, Ltd', Bobby]\n---\n"), ["O'Brien, Ltd", 'Bobby']);
+eq("the '' escape with a bracket inside the scalar",
+  aliasesOf("---\naliases: ['Acme [Q1''26]']\n---\n"), ["Acme [Q1'26]"]);
 
 // ── flow list on the line BELOW the key ──────────────────────────────────────
 // Valid YAML that gray-matter reads fine; a too-tight open regex matched neither

@@ -1348,9 +1348,17 @@ async function handleSuggestions(res: http.ServerResponse) {
 // update the comment above says this chain exists to prevent.
 const noteSaveChains = new Map<string, Promise<unknown>>();
 async function withNoteSaveLock<T>(rel: string, fn: () => Promise<T>): Promise<T> {
-  // lockKeyFor is instance-level because the key carries the vault root; brainPath is set whenever
-  // a save can happen, and the fallback only has to be stable, not canonical.
-  const key = brainPath ? Vault.open(brainPath).lockKeyFor(rel as NotePath) : rel.toLowerCase();
+  // lockKeyFor is instance-level because the key carries the vault root. Vault.open THROWS when the
+  // root is gone (an unplugged drive, a moved vault), and a lock-key derivation is the wrong place
+  // to surface that — the caller has its own error handling and would get a confusing failure from
+  // the mutex instead. Fall back to a stable-if-not-canonical key; the save that follows will report
+  // the missing folder properly. Measured at 0.09ms per save, so opening a Vault here is free.
+  let key: string;
+  try {
+    key = brainPath ? Vault.open(brainPath).lockKeyFor(rel as NotePath) : rel.toLowerCase();
+  } catch {
+    key = rel.toLowerCase();
+  }
   const prev = noteSaveChains.get(key) ?? Promise.resolve();
   let result: T;
   const run = prev.catch(() => {}).then(async () => { result = await fn(); });

@@ -451,8 +451,16 @@ async function pruneIfNeeded(gitdir: string, shouldAbort?: () => boolean): Promi
   // grows with KEEP_VERSIONS). Not zero, and not worth pretending otherwise; it happens at most once
   // per boot and every later save in the same pass sees ~10-25ms because the sweep DOES yield.
   if (shouldAbort?.()) return PRUNE_ABORTED;
+  // An aborted sweep MUST still be resumable, and the shallow marker hides it from the check below:
+  // once shallow is published, git.log stops at the new boundary and reports "nothing to do" — so a
+  // sweep that yielded after marking but before unlinking would leave its objects stranded forever,
+  // on this trigger and on every future boot. The marker file records that a sweep is outstanding so
+  // we come back and finish it. (Moving the shallow write to AFTER the sweep is not the answer: it
+  // is written first precisely so the now-unlocked listVersions cannot walk into deleted objects.)
+  const sweepMark = path.join(gitdir, 'callosium-sweep-pending');
+  const outstanding = fs.existsSync(sweepMark);
   const log = await git.log({ fs, gitdir, depth: KEEP_VERSIONS + PRUNE_SLACK + 1 }).catch(() => []);
-  if (log.length <= KEEP_VERSIONS + PRUNE_SLACK) return 0;
+  if (!outstanding && log.length <= KEEP_VERSIONS + PRUNE_SLACK) return 0;
   if (shouldAbort?.()) return PRUNE_ABORTED;
   const kept = log.slice(0, KEEP_VERSIONS).map((c) => c.oid);
   // Shallow FIRST, before anything is unlinked. listVersions runs unlocked now, so a timeline read
@@ -460,7 +468,13 @@ async function pruneIfNeeded(gitdir: string, shouldAbort?: () => boolean): Promi
   // walk stops at a commit that still exists instead of following a parent into the region we are
   // about to delete (which it would surface as "this note has no history").
   await fs.promises.writeFile(path.join(gitdir, 'shallow'), `${kept[kept.length - 1]}\n`);
-  return sweepUnreachable(gitdir, kept, shouldAbort);
+  // Mark before sweeping, clear only on completion — so a crash or an abort between the two leaves
+  // the work visible to the next pass rather than hidden behind the shallow boundary. Kept as a
+  // FILE, not process state, because the abort case we care about most is "the app was closed".
+  await fs.promises.writeFile(sweepMark, `${kept[kept.length - 1]}\n`).catch(() => {});
+  const reclaimed = await sweepUnreachable(gitdir, kept, shouldAbort);
+  if (reclaimed !== PRUNE_ABORTED) await fs.promises.rm(sweepMark, { force: true }).catch(() => {});
+  return reclaimed;
 }
 
 // Public: apply retention now. The write path already does this every PRUNE_EVERY_COMMITS commits;

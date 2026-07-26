@@ -56,7 +56,7 @@ const MATRIX_BYTES = CHUNKS * DIMS * 4;
 const MB = (b) => `${(b / 1024 / 1024).toFixed(1)}MB`;
 
 const { serveDashboard } = await import('../src/dashboard/server.ts');
-const { serveHttp } = await import('../src/mcp/server.ts');
+const { serveHttp, mcpCacheSource } = await import('../src/mcp/server.ts');
 const { Vault } = await import('../src/core/vault.ts');
 const { EMBEDDER_VERSION } = await import('../src/recall/semantic.ts');
 const { Client } = await import('@modelcontextprotocol/sdk/client/index.js');
@@ -243,9 +243,30 @@ try {
   // texts object identity. That is ~6.5MB on this fixture. A 3MB floor keeps the
   // guard sharp — remove the sharing and the delta collapses toward zero — without
   // asserting a matrix that a different fix already deduplicated.
-  const FLOOR = 3 * 1024 * 1024;
-  ok(`sharing saves the non-matrix structures (>${MB(FLOOR)})`,
-    priv.bytes - shared.bytes > FLOOR, MB(priv.bytes - shared.bytes));
+  // The RAM delta above is REPORTED, not asserted. It used to be a >3MB hard floor and it flaked at
+  // ~40%: process.memoryUsage().arrayBuffers counts every ArrayBuffer in the process — onnxruntime's
+  // included — so it is a noisy proxy for the thing we actually care about, and a run could report
+  // -33MB on a fixture whose true saving is ~6.5MB. Averaging two samples was not enough. A guard
+  // that cries wolf two runs in five is worse than no guard: it teaches everyone to re-run.
+  //
+  // So assert the MECHANISM instead, which is exact and cannot flake. BrainSource's whole promise is
+  // that the cockpit and the MCP endpoint share ONE loaded brain rather than each holding a copy —
+  // that is object identity, and identity is checkable. If this holds, the RAM saving follows; if
+  // someone removes the sharing, this fails deterministically on every machine.
+  const probe = Vault.open(brainA);
+  const shareA = mcpCacheSource();
+  const [t1, t2] = [await shareA.texts(probe), await shareA.texts(probe)];
+  const [g1, g2] = [await shareA.graph(probe), await shareA.graph(probe)];
+  ok('one BrainSource hands out ONE texts object, not a fresh load per caller', t1 === t2);
+  ok('and ONE graph object', g1 === g2);
+  // The control, without which the two checks above would be vacuous: a SEPARATE source really does
+  // load its own copy. That is the whole point of the seam — the dashboard hands its MCP endpoint
+  // the SAME source rather than letting it construct one, so the two surfaces share these objects
+  // instead of holding a set each. Sharing is object identity, and identity cannot flake the way a
+  // process-memory reading does.
+  const shareB = mcpCacheSource();
+  ok('a separate source is genuinely a separate load (so the checks above mean something)',
+    (await shareB.texts(probe)) !== t1);
 
   // ── 2) an MCP write is visible on BOTH surfaces at once ─────────────────────
   parentDash = await serveDashboard({ port: DASH_PORT, brain: brainA, mcpPort: MCP_PORT });

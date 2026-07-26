@@ -42,7 +42,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "REPLACE_WITH_callosium.key.pub_CONTENTS",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEY2NkFBQzFEMzk3OTcyODAKUldTQWNuazVIYXhxOXJVTjZHaTluU3RBYWtJaHlxZ2tHZGQ5eUgvMmFZMWhmNDRLL3dUbXExRmUK",
       "endpoints": [
         "https://github.com/callosium/callosium/releases/latest/download/latest.json"
       ],

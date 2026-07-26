@@ -3793,6 +3793,7 @@ function renderSettings(){
 
   // ── update / version (real GET /api/update/check, cached in state.st_update) ──
   const upd = state.st_update;
+  const isDesktop = !!(upd && upd.desktop);
   const checking = !!state.st_updChecking;
   const verNum = upd && upd.current ? upd.current : '';
   const checkLabel = checking ? t('checking…','...جارٍ التحقق') : t('check for updates','تحقّق من التحديثات');
@@ -3896,7 +3897,9 @@ function renderSettings(){
           <button id="stRebuildBtn"${reindexing?' disabled':''} style="${st_btnStyle()};opacity:${reindexing?'.6':'1'};cursor:${reindexing?'default':'pointer'}" ${reindexing?'':`onmouseenter="this.style.borderColor='var(--amber)';this.style.color='var(--amber)'" onmouseleave="this.style.borderColor='var(--edge2)';this.style.color='var(--dust)'"`}>${esc(rebuildLabel)}</button>
         </div>
         ${reindexErr}
-        ${st_uiOnlyNote(t('the desktop app updates itself automatically (via Tauri) — this just checks GitHub for the latest version.','يحدّث تطبيق سطح المكتب نفسه تلقائيًا (عبر Tauri) — هذا يتحقق فقط من GitHub لأحدث إصدار.'))}
+        ${st_uiOnlyNote(isDesktop
+          ? t('this is the desktop app: “Update” downloads the new version, checks its signature, installs it and restarts. it also checks on its own at each launch.','هذا تطبيق سطح المكتب: «تحديث» ينزّل الإصدار الجديد ويتحقق من توقيعه ويثبّته ثم يعيد التشغيل. كما يتحقق تلقائيًا عند كل تشغيل.')
+          : t('running via npm or npx: “Update” opens the releases page. there is no built-in auto-updater outside the desktop app; this check just compares your version with GitHub.','التشغيل عبر npm أو npx: «تحديث» يفتح صفحة الإصدارات. لا يوجد محدّث تلقائي مدمج خارج تطبيق سطح المكتب؛ هذا الفحص يقارن إصدارك بما على GitHub فقط.'))}
       </div>
 
       <div style="font-family:var(--mono);font-size:11px;color:var(--faint);text-align:center;padding:8px 0 12px;line-height:1.7">${L('Callosium is local-first. your notes are just files —','كالوسيوم محلي أولًا. ملاحظاتك مجرد ملفات —')}<br>${L('delete the app anytime and keep everything.','احذف التطبيق في أي وقت واحتفظ بكل شيء.')}</div>
@@ -4004,8 +4007,26 @@ function st_wire(){
   // check for updates — real GET /api/update/check
   const cu = $('#stCheckUpdates'); if(cu) cu.addEventListener('click', st_checkUpdates);
 
-  // update — the packaged app self-updates via Tauri; for now open GitHub releases
-  const up = $('#stUpdateBtn'); if(up) up.addEventListener('click', ()=>{ window.open('https://github.com/callosium/callosium/releases','_blank','noopener'); });
+  // update — on desktop, hand off to the native Tauri updater via a same-origin
+  // signal the shell polls (the remote page has no Tauri IPC). On npm/npx there is
+  // no bundled updater, so the releases page is the real path.
+  const up = $('#stUpdateBtn');
+  if(up) up.addEventListener('click', async ()=>{
+    const onDesktop = !!(state.st_update && state.st_update.desktop);
+    const releases = ()=>window.open('https://github.com/callosium/callosium/releases','_blank','noopener');
+    if(onDesktop){
+      up.disabled = true;
+      let r=null; try{ r = await post('/api/desktop/update'); }catch(_){}
+      if(!r || r.queued!==true){
+        // couldn't hand off to the native updater — re-enable and give a real path
+        up.disabled = false;
+        releases();
+      }
+      // on success the native shell shows an "Install & restart?" dialog and takes over
+    } else {
+      releases();
+    }
+  });
 }
 
 // Called from nav() when Settings unmounts. It used to close a live re-index

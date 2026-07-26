@@ -1699,10 +1699,29 @@ async function handleUpdateCheck(res: http.ServerResponse) {
     if (!r.ok) throw new Error(`GitHub returned ${r.status}`);
     const remote = JSON.parse(await r.text());
     const latest = String(remote.version || '');
-    send(res, 200, { current: APP_VERSION, latest, updateAvailable: !!latest && semverGt(latest, APP_VERSION), channel: 'main' });
+    send(res, 200, { current: APP_VERSION, latest, updateAvailable: !!latest && semverGt(latest, APP_VERSION), channel: 'main', desktop: !!process.env.CALLOSIUM_DESKTOP });
   } catch (err) {
     // offline or unreachable — honest, not a hard failure
-    send(res, 200, { current: APP_VERSION, latest: null, updateAvailable: false, offline: true, note: (err as Error).message });
+    send(res, 200, { current: APP_VERSION, latest: null, updateAvailable: false, offline: true, note: (err as Error).message, desktop: !!process.env.CALLOSIUM_DESKTOP });
+  }
+}
+
+// ── DESKTOP UPDATE: the web "Update" button asks the native Tauri shell to run the
+// real updater. The window loads a remote loopback URL (no Tauri IPC), so we drop a
+// one-shot signal file the Rust shell polls (same-origin, no new network egress).
+// Off the desktop shell (plain npm/npx) there is no bundled updater, so this is an
+// honest no-op and the UI falls back to the releases page. ──
+async function handleDesktopUpdate(res: http.ServerResponse) {
+  const modelDir = process.env.CALLOSIUM_MODEL_DIR;
+  if (!process.env.CALLOSIUM_DESKTOP || !modelDir) {
+    return send(res, 200, { desktop: false });
+  }
+  try {
+    const sig = path.join(path.dirname(modelDir), 'update.request');
+    await fs.writeFile(sig, String(Date.now()), 'utf8');
+    send(res, 200, { desktop: true, queued: true });
+  } catch (err) {
+    send(res, 200, { desktop: true, queued: false, note: (err as Error).message });
   }
 }
 
@@ -1876,7 +1895,7 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
   // so a bare cross-site <img src>/GET must not be able to fire it. The UI issues
   // it as a hidden form POST, which still streams to disk (unlike fetch+blob,
   // which would buffer the whole archive in browser memory).
-  const postOnly = new Set(['/api/scope', '/api/revoke', '/api/pair', '/api/rotate', '/api/rename', '/api/browse', '/api/inspect', '/api/note/save', '/api/open-folder', '/api/signup', '/api/signout', '/api/init', '/api/export', '/api/link/preview', '/api/link/apply', '/api/cleanup/preview', '/api/cleanup/apply', '/api/health/dismiss', '/api/health/undismiss', '/api/history/restore']);
+  const postOnly = new Set(['/api/scope', '/api/revoke', '/api/pair', '/api/rotate', '/api/rename', '/api/browse', '/api/inspect', '/api/note/save', '/api/open-folder', '/api/signup', '/api/signout', '/api/init', '/api/export', '/api/link/preview', '/api/link/apply', '/api/cleanup/preview', '/api/cleanup/apply', '/api/health/dismiss', '/api/health/undismiss', '/api/history/restore', '/api/desktop/update']);
 
   // Per-launch caller token (P2 #13): defense-in-depth on top of the origin guard.
   // Minted fresh each launch, embedded in the served HTML (a <meta>), and echoed
@@ -2004,6 +2023,7 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
       if (url.pathname === '/api/open-folder') return await handleOpenFolder(res, await readBody(req));
       if (url.pathname === '/api/export') return await handleExport(req, res);
       if (url.pathname === '/api/update/check') return await handleUpdateCheck(res);
+      if (url.pathname === '/api/desktop/update') return await handleDesktopUpdate(res);
       if (url.pathname === '/api/account') return await handleAccount(res);
       if (url.pathname === '/api/signup') return await handleSignup(res, await readBody(req));
       if (url.pathname === '/api/signout') return await handleSignout(res);

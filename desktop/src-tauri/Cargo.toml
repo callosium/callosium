@@ -28,6 +28,12 @@ serde_json = "1"
 # from the OS CSPRNG instead of clock+pid, which are both readable by any other local process.
 getrandom = "0.2"
 
+# Auto-updater stack (desktop): updater = check/download/install; dialog = the
+# native "Install & restart?" prompt; process = the supported relaunch surface.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+tauri-plugin-dialog = "2"
+
 # Job Objects, so the OS kills the server process whenever the shell dies — see bind_child_lifetime.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [

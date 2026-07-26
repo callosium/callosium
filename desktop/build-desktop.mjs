@@ -58,6 +58,11 @@ await fs.cp(path.join(bundle, 'runtime'), path.join(payloadDir, 'runtime'), { re
 await fs.cp(path.join(bundle, 'app'), path.join(payloadDir, 'app'), { recursive: true });
 console.log(`payload staged → ${path.relative(repo, payloadDir)}`);
 
-// 4) build the installer
-run('npx', ['tauri', 'build'], { cwd: here });
-console.log('\nDONE — installer under desktop/src-tauri/target/release/bundle/nsis/');
+// 4) build the installer (skipped with --stage-only, e.g. in CI where tauri-action
+//    runs the signed build after this staging step)
+if (!argv.includes('--stage-only')) {
+  run('npx', ['tauri', 'build'], { cwd: here });
+  console.log('\nDONE — installer under desktop/src-tauri/target/release/bundle/nsis/');
+} else {
+  console.log('\nDONE — payload staged; tauri build deferred to tauri-action.');
+}

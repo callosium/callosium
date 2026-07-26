@@ -252,6 +252,88 @@ fn app_url(app: &tauri::AppHandle) -> String {
         .unwrap_or_default()
 }
 
+/// Run the whole update flow on a background task: check → native confirm →
+/// download+install → restart. `interactive` decides whether "up to date" and
+/// errors are surfaced (tray + web button) or stay silent (the launch check).
+/// All privilege stays in Rust; the remote page never gets Tauri IPC.
+#[cfg(desktop)]
+fn spawn_update_check(app: tauri::AppHandle, interactive: bool) {
+    tauri::async_runtime::spawn(async move {
+        use tauri_plugin_updater::UpdaterExt;
+        let updater = match app.updater() {
+            Ok(u) => u,
+            Err(e) => {
+                eprintln!("callosium-desktop: updater init failed: {e}");
+                if interactive {
+                    notify(&app, &format!("Couldn't start the updater: {e}"));
+                }
+                return;
+            }
+        };
+        match updater.check().await {
+            Ok(Some(update)) => {
+                let ver = update.version.clone();
+                let notes = update.body.clone().unwrap_or_default();
+                if ask_install(&app, &ver, &notes) {
+                    if let Err(e) = update.download_and_install(|_chunk, _total| {}, || {}).await {
+                        eprintln!("callosium-desktop: update install failed: {e}");
+                        notify(&app, &format!("Update failed to install: {e}"));
+                        return;
+                    }
+                    app.restart(); // relaunch into the new version (never returns)
+                }
+            }
+            Ok(None) => {
+                if interactive {
+                    notify(&app, "Callosium is up to date.");
+                }
+            }
+            Err(e) => {
+                eprintln!("callosium-desktop: update check failed: {e}");
+                if interactive {
+                    notify(&app, &format!("Couldn't check for updates: {e}"));
+                }
+            }
+        }
+    });
+}
+
+/// Native yes/no dialog, independent of whatever the remote dashboard renders.
+#[cfg(desktop)]
+fn ask_install(app: &tauri::AppHandle, ver: &str, notes: &str) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let body = if notes.trim().is_empty() {
+        format!("Callosium {ver} is available.\n\nInstall it and restart now?")
+    } else {
+        format!("Callosium {ver} is available.\n\n{notes}\n\nInstall it and restart now?")
+    };
+    app.dialog()
+        .message(body)
+        .title("Update Callosium")
+        .kind(MessageDialogKind::Info)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Install & restart".to_string(),
+            "Later".to_string(),
+        ))
+        .blocking_show()
+}
+
+/// Native info dialog for the "up to date" / error surfaces.
+#[cfg(desktop)]
+fn notify(app: &tauri::AppHandle, msg: &str) {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog().message(msg).title("Callosium").blocking_show();
+}
+
+/// On-demand trigger. The remote web UI reaches this via the signal file the
+/// setup poller watches; registered as a command so a future trusted local
+/// window could also invoke it directly.
+#[tauri::command]
+fn check_and_install_update(app: tauri::AppHandle) {
+    #[cfg(desktop)]
+    spawn_update_check(app, true);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -260,8 +342,12 @@ pub fn run() {
             show_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(ServerProc(Mutex::new(None)))
         .manage(AppUrl(Mutex::new(String::new())))
+        .invoke_handler(tauri::generate_handler![check_and_install_update])
         .setup(|app| {
             // 1) pick an OS-assigned port + a per-launch token, remember the URL, start the server.
             let port = free_port();
@@ -298,9 +384,11 @@ pub fn run() {
             let open_i = MenuItem::with_id(app, "open", "Open Callosium", true, None::<&str>)?;
             let browser_i =
                 MenuItem::with_id(app, "browser", "Open in browser", true, None::<&str>)?;
+            let update_i =
+                MenuItem::with_id(app, "check_update", "Check for updates…", true, None::<&str>)?;
             let sep = PredefinedMenuItem::separator(app)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit Callosium", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open_i, &browser_i, &sep, &quit_i])?;
+            let menu = Menu::with_items(app, &[&open_i, &browser_i, &update_i, &sep, &quit_i])?;
 
             let _tray = TrayIconBuilder::with_id("callosium-tray")
                 .icon(app.default_window_icon().unwrap().clone())
@@ -315,6 +403,10 @@ pub fn run() {
                         if !url.is_empty() {
                             let _ = app.opener().open_url(url, None::<&str>);
                         }
+                    }
+                    "check_update" => {
+                        #[cfg(desktop)]
+                        spawn_update_check(app.clone(), true);
                     }
                     "quit" => {
                         kill_server(app);
@@ -399,6 +491,30 @@ pub fn run() {
                     },
                 }
             });
+
+            // 5) auto-update: check ~5s after boot (silent unless one exists), and poll for a
+            //    web-button request. The Settings "Update" button (remote page, no Tauri IPC)
+            //    drops a one-shot signal file that this loop consumes — the safe same-origin bridge.
+            #[cfg(desktop)]
+            {
+                let boot_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(5));
+                    spawn_update_check(boot_handle, false); // silent: only prompts if an update exists
+                });
+
+                let sig_handle = app.handle().clone();
+                let sig_path = model_cache_dir().parent().map(|p| p.join("update.request"));
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(Duration::from_secs(3));
+                    if let Some(ref path) = sig_path {
+                        if path.exists() {
+                            let _ = std::fs::remove_file(path);
+                            spawn_update_check(sig_handle.clone(), true); // user asked → surface the result
+                        }
+                    }
+                });
+            }
 
             Ok(())
         })

@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Callosium desktop shell capabilities",
   "windows": ["main"],
-  "permissions": ["core:default", "opener:default"]
+  "permissions": ["core:default", "opener:default", "updater:default", "process:allow-restart"]
 }

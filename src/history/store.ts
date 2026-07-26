@@ -459,10 +459,23 @@ async function pruneIfNeeded(gitdir: string, shouldAbort?: () => boolean): Promi
   // is written first precisely so the now-unlocked listVersions cannot walk into deleted objects.)
   const sweepMark = path.join(gitdir, 'callosium-sweep-pending');
   const outstanding = fs.existsSync(sweepMark);
-  const log = await git.log({ fs, gitdir, depth: KEEP_VERSIONS + PRUNE_SLACK + 1 }).catch(() => []);
+  // null = the walk FAILED; [] would be indistinguishable from "no history", and that distinction
+  // is load-bearing two lines down.
+  const log = await git.log({ fs, gitdir, depth: KEEP_VERSIONS + PRUNE_SLACK + 1 }).catch(() => null);
+  if (!log) return 0;
   if (!outstanding && log.length <= KEEP_VERSIONS + PRUNE_SLACK) return 0;
   if (shouldAbort?.()) return PRUNE_ABORTED;
   const kept = log.slice(0, KEEP_VERSIONS).map((c) => c.oid);
+  // NEVER sweep with an empty kept set. The `outstanding` bypass above skips the size check, so an
+  // empty log would reach the sweep with kept = [] — which is not "prune the tail", it is "nothing
+  // is reachable": it writes `undefined` into shallow and unlinks every commit, tree and historical
+  // blob in the store, destroying the entire version history and leaving snapshotNote throwing on
+  // every later write. hasHead() does not protect against this; it resolves the HEAD *ref* and never
+  // proves the commit object is readable, so one transient object-read failure on a cloud-synced or
+  // AV-scanned history dir is enough. Before the marker existed this state hit the size check and
+  // did nothing — the bypass is what made it destructive. Keep the marker so a genuinely outstanding
+  // sweep is retried once the log reads cleanly again.
+  if (!kept.length) return 0;
   // Shallow FIRST, before anything is unlinked. listVersions runs unlocked now, so a timeline read
   // can be walking this chain right now; publishing the new boundary before the sweep means such a
   // walk stops at a commit that still exists instead of following a parent into the region we are

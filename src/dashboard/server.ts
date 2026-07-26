@@ -1347,17 +1347,32 @@ async function handleSuggestions(res: http.ServerResponse) {
 // both passed the compare-and-swap, and the second silently overwrote the first — the precise lost
 // update the comment above says this chain exists to prevent.
 const noteSaveChains = new Map<string, Promise<unknown>>();
+// One Vault per root, kept for key derivation only — see withNoteSaveLock. Deliberately never
+// invalidated: a Vault is just a validated root path, and the whole point is that the key for a
+// given note stays identical for the life of the process.
+const keyVaults = new Map<string, Vault>();
+function vaultForKeys(root: string): Vault {
+  let v = keyVaults.get(root);
+  if (!v) {
+    v = Vault.open(root); // throws if the root is gone — caller falls back, see below
+    keyVaults.set(root, v);
+  }
+  return v;
+}
 async function withNoteSaveLock<T>(rel: string, fn: () => Promise<T>): Promise<T> {
-  // lockKeyFor is instance-level because the key carries the vault root. Vault.open THROWS when the
-  // root is gone (an unplugged drive, a moved vault), and a lock-key derivation is the wrong place
-  // to surface that — the caller has its own error handling and would get a confusing failure from
-  // the mutex instead. Fall back to a stable-if-not-canonical key; the save that follows will report
-  // the missing folder properly. Measured at 0.09ms per save, so opening a Vault here is free.
+  // lockKeyFor is instance-level because the key carries the vault root, so we need a Vault here.
+  // It is MEMOIZED per root rather than opened per save, and that is a correctness point, not a
+  // performance one (opening measured 0.09ms): Vault.open throws when the root is gone, and a
+  // fallback key would then differ from the canonical key a concurrent save already holds. Two
+  // saves of one note on different chains both read the same baseHash, both pass the CAS, and the
+  // second clobbers the first — the exact lost update this chain exists to stop. Memoizing means a
+  // vault that opened once keeps deriving identical keys even if the drive later vanishes; the save
+  // itself then fails on its own terms, which is where that error belongs.
   let key: string;
   try {
-    key = brainPath ? Vault.open(brainPath).lockKeyFor(rel as NotePath) : rel.toLowerCase();
+    key = brainPath ? vaultForKeys(brainPath).lockKeyFor(rel as NotePath) : rel.toLowerCase();
   } catch {
-    key = rel.toLowerCase();
+    key = rel.toLowerCase(); // never opened successfully — no canonical key exists to diverge from
   }
   const prev = noteSaveChains.get(key) ?? Promise.resolve();
   let result: T;

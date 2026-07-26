@@ -260,10 +260,15 @@ try {
   ok('one BrainSource hands out ONE texts object, not a fresh load per caller', t1 === t2);
   ok('and ONE graph object', g1 === g2);
   // The control, without which the two checks above would be vacuous: a SEPARATE source really does
-  // load its own copy. That is the whole point of the seam — the dashboard hands its MCP endpoint
-  // the SAME source rather than letting it construct one, so the two surfaces share these objects
-  // instead of holding a set each. Sharing is object identity, and identity cannot flake the way a
-  // process-memory reading does.
+  // load its own copy.
+  //
+  // Be precise about what this pair does and does not prove. It proves the SEAM behaves as the
+  // sharing design requires — one source is one loaded brain, two sources are two — which is what
+  // the deleted RAM assertion was a noisy proxy for. It does NOT by itself prove the dashboard
+  // hands its own source to the MCP endpoint rather than letting it build one; that wiring is what
+  // sections 2 and 3 below cover behaviourally (an MCP write visible on both surfaces at once, and
+  // a cockpit brain switch re-baselining both). Stating that split matters: an earlier draft of
+  // this comment claimed removing the sharing would fail these assertions, and it would not.
   const shareB = mcpCacheSource();
   ok('a separate source is genuinely a separate load (so the checks above mean something)',
     (await shareB.texts(probe)) !== t1);

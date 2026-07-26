@@ -301,11 +301,10 @@ function ob_heroHTML(){
 // Brand marks for the sign-in providers (inline SVG — no external asset).
 const OB_PROVIDER_LOGO = {
   google: '<svg width="17" height="17" viewBox="0 0 48 48" style="flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>',
-  apple: '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--starlight)" style="flex-shrink:0"><path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/></svg>',
   github: '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--dust)" style="flex-shrink:0"><path d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.09 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 016 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.62-5.49 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.83.58C20.56 22.3 24 17.8 24 12.5 24 5.87 18.63.5 12 .5z"/></svg>',
 };
 
-// ── VIEW: sign-up. Real Supabase Auth (Google/Apple/GitHub OAuth or email);
+// ── VIEW: sign-up. Real Supabase Auth (Google/GitHub OAuth or email);
 // the free/local path is "continue as guest" (no account, notes never leave). ──
 function ob_signupHTML(){
   const prov=(id,label)=> '<button data-ob-oauth="'+id+'" style="display:flex;align-items:center;justify-content:center;gap:11px;width:100%;font-family:var(--sans);font-weight:600;font-size:14px;color:var(--starlight);background:var(--surface2);border:1px solid var(--edge2);border-radius:0;padding:13px;cursor:pointer;transition:.13s;margin-bottom:10px" onmouseover="this.style.borderColor=\'var(--dust)\'" onmouseout="this.style.borderColor=\'var(--edge2)\'">'+OB_PROVIDER_LOGO[id]+'<span>'+label+'</span></button>';
@@ -320,7 +319,6 @@ function ob_signupHTML(){
     + '<h1 style="font-family:var(--pixel);font-weight:700;font-size:30px;margin:20px 0 8px">'+t('welcome in.','أهلًا بك.')+'</h1>'
     + '<p style="color:var(--dust);font-size:13.5px;line-height:1.6;margin-bottom:22px">'+t('sign in to save your place and sync across devices later. your notes always stay on this device.','سجّل الدخول لحفظ مكانك والمزامنة بين الأجهزة لاحقًا. ملاحظاتك تبقى دائمًا على هذا الجهاز.')+'</p>'
     + prov('google', t('Continue with Google','المتابعة عبر Google'))
-    + prov('apple', t('Continue with Apple','المتابعة عبر Apple'))
     + prov('github', t('Continue with GitHub','المتابعة عبر GitHub'))
     + '<div style="display:flex;align-items:center;gap:10px;margin:16px 0"><span style="flex:1;height:1px;background:var(--edge)"></span><span style="font-family:var(--mono);font-size:10px;color:var(--faint)">'+t('or with email','أو عبر البريد')+'</span><span style="flex:1;height:1px;background:var(--edge)"></span></div>'
     + '<input id="obName" placeholder="'+t('your name (optional)','اسمك (اختياري)')+'" aria-label="'+t('your name (optional)','اسمك (اختياري)')+'" style="'+inp+';margin-bottom:9px">'
@@ -480,7 +478,7 @@ function ob_connectHTML(){
 function renderOnboard(phase){
   state.onboardPhase = phase;
   // Complete an OAuth redirect on first onboarding render — if the user is
-  // returning from Google/Apple/GitHub, this picks up the session and proceeds.
+  // returning from Google/GitHub, this picks up the session and proceeds.
   if(!state.ob_sbChecked) ob_checkSupabaseSession();
   if(!state.ob_view) state.ob_view = (phase==='setup') ? 'choice' : 'hero';
   const el = $('#onboard'); if(!el) return;

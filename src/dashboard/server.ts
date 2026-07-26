@@ -1724,7 +1724,7 @@ async function handleSignup(res: http.ServerResponse, body: Json) {
   const provider = typeof body.provider === 'string' ? body.provider : 'guest';
   const name = (typeof body.name === 'string' && body.name.trim()) || 'You';
   const email = typeof body.email === 'string' ? body.email : undefined;
-  if (!['google', 'apple', 'github', 'email', 'guest'].includes(provider)) return send(res, 400, { error: 'Unknown provider.' });
+  if (!['google', 'github', 'email', 'guest'].includes(provider)) return send(res, 400, { error: 'Unknown provider.' });
   const account: Account = { provider, name: name.slice(0, 80), email, plan: 'free', createdAt: new Date().toISOString() };
   try {
     await fs.mkdir(APP_DIR, { recursive: true });

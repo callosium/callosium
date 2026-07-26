@@ -44,7 +44,7 @@ Plenty of tools can point an AI at a folder of Markdown. What sets Callosium apa
 
 - **It's measured, not asserted.** A 10,000-question benchmark ships in this repo — run it against your own brain. Most "AI memory" is graded by the vendor that sells it; this you can check yourself.
 - **Every AI, scoped and attributed.** Connect Claude, Cursor, ChatGPT-compatible apps and more to the *same* brain. Each write is stamped with *which* AI made it (unforgeable, server-side), and you decide per-AI what each one may even see.
-- **Nothing gets lost — whoever edits it.** Every note is versioned automatically: whether an AI wrote it through Callosium or you edited the file yourself in Obsidian, the change is captured and one click away from being undone. (The last 20,000 versions are kept — years of normal use, about 18MB. `CALLOSIUM_HISTORY_KEEP` raises it.)
+- **Nothing gets lost — whoever edits it.** Every note is versioned automatically: whether an AI wrote it through Callosium or you edited the file yourself in Obsidian, the change is captured and one click away from being undone. Delete a note by accident and it's still there. Versions are kept outside your notes folder, so your vault never grows because of them, and they cost about 900 bytes each — a hundred thousand edits is under 100MB.
 - **No terminal to live in.** A local dashboard runs onboarding, the connection config for each AI, health checks, and search — not a command line.
 - **Bilingual by design.** Meaning-based recall works in English *and* Arabic, out of the box.
 - **Actually yours.** Plain files on your own disk. No database, no cloud, no account. Uninstall tomorrow and your notes are still just… notes.

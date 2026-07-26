@@ -23,7 +23,11 @@ import os from 'node:os';
 
 const root = path.join(os.tmpdir(), `callosium-retention-${process.pid}`);
 process.env.CALLOSIUM_HISTORY_ROOT = path.join(root, 'hist');
-process.env.CALLOSIUM_HISTORY_KEEP = '1000000'; // build without pruning; lowered per-case below
+// A ceiling where retention is ACTIVE. The shipped default is 20 million, which is deliberately
+// above the depth the "is a trim due?" probe will walk — so at the default these assertions would
+// all pass vacuously, guarding nothing. High enough not to trim the 12-commit fixture while it is
+// being built (threshold = KEEP + max(100, KEEP/10)), low enough that the sweep really runs.
+process.env.CALLOSIUM_HISTORY_KEEP = '200';
 
 let pass = 0, fail = 0;
 const ok = (n, c, extra = '') => { if (c) { pass++; console.log('  ✓ ' + n); } else { fail++; console.log('  ✗ ' + n + (extra ? '  ' + extra : '')); } };

@@ -64,7 +64,20 @@ const SKIP_DIRS = new Set(['.git', '.obsidian', '.trash', 'node_modules', '.call
 // KEEP saves nothing worth having (2,000 versions is 1.8MB) while throwing away history the product
 // exists to keep; and running the pass often makes it the dominant cost of writing a note (at one
 // pass per 100 commits it was ~75% of write throughput). Hence: keep a lot, prune rarely.
-const KEEP_VERSIONS = Math.max(50, Number(process.env.CALLOSIUM_HISTORY_KEEP) || 20_000);
+//
+// The ceiling is 20 MILLION versions, which in practice means trimming NEVER HAPPENS — and that is
+// the intent, not an accident of a round number. Trimming drops the OLDEST changes, and a note that
+// still exists is never at risk (its current bytes are in the newest snapshot), so the only thing a
+// trim can actually destroy is the last copy of a note you DELETED. That is precisely the thing a
+// safety net exists for: "I deleted it, get it back" is the feature. Measured at KEEP=5 to force it,
+// a deleted note went from recoverable to gone once trimming passed it, while a still-existing note
+// kept every version — so the cap was the one setting that could lose real work.
+//
+// The cost of never trimming is bounded by what the owner actually writes, not by this number:
+// 918 bytes a version means 100,000 saves is ~92MB, and it lives in ~/.callosium/history, OUTSIDE
+// the vault, so the brain folder is unaffected either way. The ceiling stays as a runaway backstop
+// (a broken loop writing millions of commits) rather than a retention policy.
+const KEEP_VERSIONS = Math.max(50, Number(process.env.CALLOSIUM_HISTORY_KEEP) || 20_000_000);
 // Retention is triggered at boot and, as a backstop for a session that never restarts, every
 // PRUNE_EVERY_COMMITS commits. Neither trigger is allowed to sit in a note save's latency: both run
 // DETACHED and the pass aborts the moment a real write queues (see scheduleRetention / trackWrite).
@@ -459,11 +472,27 @@ async function pruneIfNeeded(gitdir: string, shouldAbort?: () => boolean): Promi
   // is written first precisely so the now-unlocked listVersions cannot walk into deleted objects.)
   const sweepMark = path.join(gitdir, 'callosium-sweep-pending');
   const outstanding = fs.existsSync(sweepMark);
+  // The "is a trim due?" probe must stay cheap NO MATTER how high the ceiling is. depth is only a
+  // cap, so asking for KEEP + slack (22 million now) would walk the ENTIRE history on every boot —
+  // fine at a 20,000 ceiling where the cap bounded it, a full-history walk once the ceiling went up.
+  // PROBE_DEPTH bounds it instead: if the store is shallower than the probe, it is definitively
+  // under any larger threshold and we are done. If it is deeper than the probe but the real
+  // threshold is higher still, we stop looking and call it not-due — walking millions of commits to
+  // confirm what we already expect would cost more than the disk it might reclaim. A ceiling this
+  // high is a runaway backstop, not a policy, so checking it approximately is the right trade.
+  const PROBE_DEPTH = 50_000;
+  const threshold = KEEP_VERSIONS + PRUNE_SLACK;
+  // When the ceiling is higher than we are willing to walk, we can never PROVE the store is over it
+  // — so do nothing at all, including when a sweep marker is present. This has to be an early exit
+  // rather than a "not due" flag: falling through with a truncated log would set kept to the newest
+  // PROBE_DEPTH commits and the sweep would delete every older one. Refusing to look is safe;
+  // half-looking and then deleting is how you lose a history.
+  if (threshold + 1 > PROBE_DEPTH) return 0;
   // null = the walk FAILED; [] would be indistinguishable from "no history", and that distinction
   // is load-bearing two lines down.
-  const log = await git.log({ fs, gitdir, depth: KEEP_VERSIONS + PRUNE_SLACK + 1 }).catch(() => null);
+  const log = await git.log({ fs, gitdir, depth: threshold + 1 }).catch(() => null);
   if (!log) return 0;
-  if (!outstanding && log.length <= KEEP_VERSIONS + PRUNE_SLACK) return 0;
+  if (!outstanding && log.length <= threshold) return 0;
   if (shouldAbort?.()) return PRUNE_ABORTED;
   const kept = log.slice(0, KEEP_VERSIONS).map((c) => c.oid);
   // NEVER sweep with an empty kept set. The `outstanding` bypass above skips the size check, so an

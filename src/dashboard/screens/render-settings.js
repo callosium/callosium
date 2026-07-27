@@ -452,6 +452,7 @@ function st_reindex(full){
     if(reload){
       try{ await loadOverview(); await loadActivity(); }catch(_){}
       state.st_overview = state.overview;   // refresh cached name/path/storage for this screen
+      startEmbedPoll(); // background embed rebuild — drive the same persistent index banner
     }
     if(state.screen==='settings') renderSettings();
   };

@@ -54,6 +54,15 @@ try {
     (await fetch(`${BASE}/api/state`, { headers: { 'x-callosium-token': token } })).status === 200);
   ok('/api/state with a WRONG token is refused (403)',
     (await fetch(`${BASE}/api/state`, { headers: { 'x-callosium-token': 'x'.repeat(token.length) } })).status === 403);
+
+  // Background-embed status route (non-blocking semantic): a GET, token-gated like
+  // every /api/ route, and 'idle' with no brain connected (never a stale build's numbers).
+  ok('/api/embed/status WITHOUT the token is refused (403)', (await fetch(`${BASE}/api/embed/status`)).status === 403);
+  const embRes = await fetch(`${BASE}/api/embed/status`, { headers: { 'x-callosium-token': token } });
+  const emb = await embRes.json().catch(() => ({}));
+  ok('/api/embed/status WITH the token returns idle for no brain',
+    embRes.status === 200 && emb.status === 'idle' && emb.done === 0 && emb.total === 0,
+    JSON.stringify(emb));
 } finally {
   cleanup();
 }

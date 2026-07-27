@@ -93,6 +93,7 @@ let brainGeneration = 0;
 function setBrain(p: string): void {
   brainPath = p;
   brainGeneration++;
+  abortEmbedding(); // supersede any in-flight background embed for the OLD brain
   // Drop every derived cache synchronously — a separate dropCache() at the call
   // site left a window where loadAll served the old brain under the new path.
   cache = null;
@@ -662,8 +663,85 @@ async function handleInspect(res: http.ServerResponse, body: Json) {
 // win, leaving the served brain out of sync with what the UI last showed.
 let ingesting = false;
 
+// ── Background embedding worker (non-blocking semantic) ─────────────────────
+// The brain connects on keyword recall the instant scan+graph finish; embeddings
+// build HERE, off the request path, and activate semantic when done. Polled by
+// GET /api/embed/status and folded into /api/overview so the cockpit shows a
+// visible X/Y indicator without holding the ingest SSE stream open.
+type EmbedPhase = 'model' | 'embed';
+interface EmbedStatus {
+  building: boolean;
+  phase: EmbedPhase; // 'model' = first-run weight download, 'embed' = vectorizing
+  done: number; // chunks embedded so far
+  total: number; // total chunks (0 until the first batch reports)
+  modelPct: number | null; // 0-100 while the ~120MB model downloads (first run), else null
+  error: string | null; // ModelUnavailableError message on a failed build
+  brain: string | null; // the vault dir this build is FOR (brain-match guard)
+}
+let embedStatus: EmbedStatus = { building: false, phase: 'embed', done: 0, total: 0, modelPct: null, error: null, brain: null };
+// Monotonic token; a re-index / brain switch bumps it to abort a stale in-flight build.
+let embedRun = 0;
+// Force-abort any in-flight background embed. Called from setBrain, so every
+// connect / switch / re-index supersedes the previous brain's worker exactly once.
+function abortEmbedding(): void {
+  embedRun++;
+  embedStatus = { building: false, phase: 'embed', done: 0, total: 0, modelPct: null, error: null, brain: null };
+}
+// Serialize background builds. buildEmbeddings writes the sidecar with a
+// temp+rename; two of them racing on the SAME dir could interleave their renames
+// into a torn embeddings.f32 / .json pair (mismatched buildId → semantic drops to
+// keyword until a manual re-index). Chaining guarantees ONE build writes at a
+// time: a build that gets superseded (embedRun moves on) skips ACTIVATION, and the
+// next queued build overwrites its sidecar cleanly. never rejects (catch swallows)
+// so the chain can't stall.
+let embedChain: Promise<void> = Promise.resolve();
+function startEmbeddingWorker(dir: string, texts: VaultTexts): void {
+  const run = ++embedRun; // this worker's identity
+  const genAtStart = brainGeneration; // the brain generation we are building for
+  embedStatus = { building: true, phase: 'embed', done: 0, total: 0, modelPct: null, error: null, brain: dir };
+  embedChain = embedChain.then(() => runEmbed(run, dir, texts, genAtStart)).catch(() => {});
+}
+async function runEmbed(run: number, dir: string, texts: VaultTexts, genAtStart: number): Promise<void> {
+  if (run !== embedRun) return; // superseded before our turn even came up — don't build or write
+  // Everything (incl. the synchronous Vault.open, which THROWS if the folder was
+  // unmounted/removed mid-flow) lives inside the try so a throw records an error
+  // status instead of latching embedStatus.building=true forever.
+  try {
+    const vault = Vault.open(dir);
+    // First-run model download → status var (the SSE ingest stream is already closed).
+    onModelProgress((pct) => {
+      if (run === embedRun) embedStatus = { ...embedStatus, phase: 'model', modelPct: pct };
+    });
+    const emb = await buildEmbeddings(vault, texts.files, texts.texts, (done, total) => {
+      if (run !== embedRun) throw new Error('superseded'); // a newer run took over — stop cooperatively
+      embedStatus = { ...embedStatus, phase: 'embed', modelPct: null, done, total };
+    });
+    if (run !== embedRun) return; // superseded during the build — the next queued run overwrites this sidecar
+    activateSemantic(dir, genAtStart); // invalidate the cache so the next loadAll reads the fresh sidecar
+    embedStatus = { building: false, phase: 'embed', done: emb.chunks.length, total: emb.chunks.length, modelPct: null, error: null, brain: dir };
+  } catch (err) {
+    if (run !== embedRun) return; // aborted — leave the newer run's status untouched
+    const msg = err instanceof ModelUnavailableError ? err.message : (err as Error).message;
+    embedStatus = { building: false, phase: 'embed', done: 0, total: 0, modelPct: null, error: msg, brain: dir };
+    console.error('[callosium] background embed: ' + msg);
+  } finally {
+    if (run === embedRun) onModelProgress(null);
+  }
+}
+// Publish a finished background build: invalidate the shared cache so the NEXT
+// loadAll re-runs loadEmbeddings and reads the freshly-written embeddings.f32/.json
+// from disk (its stat-identity memo re-reads because the rename changed size+mtime).
+// Routes through the same generation/epoch publish guards + shared cache as every
+// other write, so semantic lights up on both the cockpit and MCP with no extra wiring.
+function activateSemantic(dir: string, genAtStart: number): void {
+  if (!brainPath || brainPath !== dir) return; // owner switched brains during the build
+  if (brainGeneration !== genAtStart) return; // generation moved → this build is for a stale brain
+  dropCache(); // cache=null, reportCache=null, cacheEpoch++ — next read reloads from disk
+  lastSemanticError = null; // a good build clears any prior "semantic off" banner
+}
+
 // The ingest journey, streamed as Server-Sent Events so the UI shows live
-// progress: scan → graph → embeddings → done.
+// progress: scan → graph → connect (embeddings then build in the background).
 async function handleIngest(req: http.IncomingMessage, res: http.ServerResponse, dir: string) {
   res.writeHead(200, {
     'content-type': 'text/event-stream',
@@ -697,33 +775,23 @@ async function handleIngest(req: http.IncomingMessage, res: http.ServerResponse,
     if (aborted) return;
     emit('stat', { notes: texts.files.length, edges: graph.edges.filter((e) => !e.unresolved).length });
 
-    emit('phase', { step: 'embed', label: 'learning what your notes mean' });
-    // First run downloads the ~120MB embedding model — stream that progress so
-    // the user sees a one-time download, not a hang. If the model can't be
-    // fetched (offline first run), the brain still connects fully: keyword
-    // recall needs no model; semantic enables itself on the next re-index.
-    onModelProgress((pct) => emit('model', { pct, label: `downloading the language model (one-time): ${pct}%` }));
-    let emb: EmbeddingIndex | null = null;
-    try {
-      emb = await buildEmbeddings(vault, texts.files, texts.texts, (done, total) => {
-        emit('embed', { done, total });
-      });
-    } catch (err) {
-      if (!(err instanceof ModelUnavailableError)) throw err;
-      emit('model', { pct: null, label: 'language model unavailable (offline?) — keyword recall works; semantic joins on the next re-index' });
-      console.error('[callosium] ' + err.message);
-    } finally {
-      onModelProgress(null);
-    }
+    // Connect the brain NOW, on keyword recall — no embeddings yet. Semantic is an
+    // upgrade lane, not a gate: the cockpit opens immediately and embeddings build
+    // in the background (below), lighting up semantic when they finish. We no longer
+    // await buildEmbeddings on the request path.
     if (aborted) return;
-    emit('stat', { notes: texts.files.length, edges: graph.edges.filter((e) => !e.unresolved).length, chunks: emb ? emb.chunks.length : 0 });
-
-    setBrain(dir); // resets every brain-scoped cache atomically (no separate dropCache needed)
+    setBrain(dir); // resets every brain-scoped cache atomically AND aborts any prior brain's embed worker
     // Generate the brain's Map (System/Map.md) so it exists from first ingest and
     // travels with the vault — the routing map any AI reads to navigate. Uses the
     // FULL texts (unscoped); best-effort inside writeMap so it never breaks ingest.
     try { const { schema: sch } = await loadSchema(vault); await writeMap(vault, sch, texts); } catch { /* non-fatal */ }
-    emit('done', { path: dir, notes: texts.files.length, edges: graph.edges.filter((e) => !e.unresolved).length, chunks: emb ? emb.chunks.length : 0 });
+    // semantic:'building' tells the client the brain is live but meaning-search is
+    // still warming up; the persistent index banner polls /api/embed/status for X/Y.
+    emit('done', { path: dir, notes: texts.files.length, edges: graph.edges.filter((e) => !e.unresolved).length, semantic: 'building' });
+    // Fire-and-forget: build embeddings off the request path (reusing the texts we
+    // already scanned — no second disk walk), then activate semantic. Does NOT await,
+    // does NOT throw into ingest (its own try/catch records failure into embedStatus).
+    startEmbeddingWorker(dir, texts);
   } catch (err) {
     emit('error', { message: (err as Error).message });
   } finally {
@@ -859,6 +927,8 @@ async function handleOverview(res: http.ServerResponse) {
     // non-null when an EXISTING embedding cache failed to load (corrupt/torn) —
     // the UI shows a "re-index to restore semantic" banner instead of silence.
     semanticError: emb ? null : lastSemanticError,
+    // background-embed progress so the single overview poll also carries the banner state
+    embedding: embedSnapshot(),
     // when the INDEX was actually built (not the newest note edit — those are
     // different, and conflating them would hide index staleness).
     lastIndexedMs: Date.parse(graph.builtAt) || 0,
@@ -871,6 +941,33 @@ async function handleOverview(res: http.ServerResponse) {
     // when nothing is listening. Same field on the no-brain branch above — see that comment.
     mcp: mcpStatus,
   });
+}
+
+// Background-embed progress for the persistent index banner. Numbers are reported
+// ONLY when they belong to the currently-connected brain — a stale build for a brain
+// we've since switched away from must not drive the current cockpit's banner.
+function embedSnapshot() {
+  const mine = !!brainPath && embedStatus.brain === brainPath;
+  const status: 'idle' | 'building' | 'done' | 'error' = !mine
+    ? 'idle'
+    : embedStatus.building
+      ? 'building'
+      : embedStatus.error
+        ? 'error'
+        : embedStatus.done > 0
+          ? 'done'
+          : 'idle';
+  return {
+    status,
+    phase: embedStatus.phase,
+    done: mine ? embedStatus.done : 0,
+    total: mine ? embedStatus.total : 0,
+    modelPct: mine ? embedStatus.modelPct : null,
+    error: mine ? embedStatus.error : null,
+  };
+}
+function handleEmbedStatus(res: http.ServerResponse) {
+  return send(res, 200, embedSnapshot());
 }
 
 // ── ACTIVITY: recent note edits (real mtimes; agent-level logging is a
@@ -1992,6 +2089,7 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
       }
       if (url.pathname === '/api/state') return await handleState(res);
       if (url.pathname === '/api/overview') return await handleOverview(res);
+      if (url.pathname === '/api/embed/status') return handleEmbedStatus(res);
       if (url.pathname === '/api/activity') return await handleActivity(res, clampInt(url.searchParams.get('limit'), 12, 200));
       if (url.pathname === '/api/recall') return await handleRecall(res, url.searchParams.get('q') || '');
       if (url.pathname === '/api/check') return await handleCheck(res);

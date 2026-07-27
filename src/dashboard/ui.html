@@ -432,7 +432,7 @@ function sparkCount(vt, v){ return Math.max(6, Math.min(MAX_STARS, Math.round(vi
 const state = {
   screen:'overview', theme:'dark', live:true, lang:'en', account:null, onboardPhase:null,
   nums:[0,0,0,0,0], targets:[0,0,0,0,0],
-  overview:null, activity:[], reindexing:false,
+  overview:null, activity:[], reindexing:false, embed:null,
 };
 
 // ── i18n: t(en, ar) picks by state.lang; applyLang flips dir + re-renders ──
@@ -618,7 +618,10 @@ async function loadOverview(){
     // onboarded=false and boot() restarted onboarding for a set-up user.
     if(o && o.httpStatus){ state.overviewFailed = true; return; }
     state.overview = o; state.overviewFailed = false;
+    state.semanticError = o.semanticError || null; // load-time cache error → the index banner shows it
+    if(o.embedding) state.embed = o.embedding; // reconcile the banner's build-status with the fresh snapshot
     state.mcp = o.mcp || null; // whether the local MCP endpoint actually bound — see the connect guide
+    if(typeof renderIndexBanner==='function') renderIndexBanner();
     if(!o.onboarded){ return; } // boot() decides whether to show onboarding
     const v = o.vitals||{};
     state.targets = [v.notes||0, v.connections||0, v.health||0, v.meaningPoints||0, v.agents||0];
@@ -1260,7 +1263,7 @@ function reindex(){
       btn.title = (msg ? String(msg)+' ' : '') + 'The re-index stopped before it finished. Your brain was not fully rebuilt — click to try again.';
     }
     announce(reload ? 'index updated' : busy ? String(msg) : (msg ? String(msg)+' ' : '')+'re-index failed — your brain was not rebuilt');
-    if(reload){ await loadOverview(); await loadActivity(); if(state.screen==='overview') render(); } };
+    if(reload){ await loadOverview(); await loadActivity(); if(state.screen==='overview') render(); startEmbedPoll(); } };
   es.addEventListener('phase',e=>{ try{ const d=JSON.parse(e.data); btn.textContent=d.label+'…'; announce(d.label); }catch(_){} });
   es.addEventListener('done',()=>done(true));
   es.addEventListener('error',e=>{ let msg=null; try{ const d=JSON.parse(e&&e.data); if(d&&d.message) msg=String(d.message); }catch(_){} done(false,msg); });
@@ -4059,6 +4062,7 @@ function st_reindex(full){
     if(reload){
       try{ await loadOverview(); await loadActivity(); }catch(_){}
       state.st_overview = state.overview;   // refresh cached name/path/storage for this screen
+      startEmbedPoll(); // background embed rebuild — drive the same persistent index banner
     }
     if(state.screen==='settings') renderSettings();
   };
@@ -6812,7 +6816,7 @@ function renderUpdateBanner(){
   const app = document.getElementById('app');
   const show = !!(state.st_update && state.st_update.updateAvailable) && !state.updateBannerDismissed;
   let el = document.getElementById('calUpdateBanner');
-  if(!show){ if(el) el.remove(); if(app){ app.style.marginTop=''; app.style.height=''; } return; }
+  if(!show){ if(el) el.remove(); __layoutBanners(); return; }
   const ver = (state.st_update && state.st_update.latest) ? ' (v'+state.st_update.latest+')' : '';
   if(!el){
     el = document.createElement('div');
@@ -6833,7 +6837,93 @@ function renderUpdateBanner(){
   x.style.cssText = 'background:transparent;border:none;color:#0b0a0f;font-size:15px;line-height:1;cursor:pointer;padding:2px 6px;opacity:.85';
   x.onclick = ()=>{ state.updateBannerDismissed = true; renderUpdateBanner(); };
   el.appendChild(msg); el.appendChild(btn); el.appendChild(x);
-  requestAnimationFrame(()=>{ try{ const h = el.offsetHeight; if(app){ app.style.marginTop = h+'px'; app.style.height = 'calc(100vh - '+h+'px)'; } }catch(_){} });
+  requestAnimationFrame(()=>{ try{ __layoutBanners(); }catch(_){} });
+}
+// Stacks the fixed top banners (update + index) and reserves exactly their
+// combined height under #app, so neither covers the header and they never fight
+// over the same margin. Called by BOTH banners whenever one mounts/unmounts.
+function __layoutBanners(){
+  const app = document.getElementById('app');
+  const up = document.getElementById('calUpdateBanner');
+  const ix = document.getElementById('calIndexBanner');
+  let top = 0;
+  if(up){ up.style.top = top+'px'; top += up.offsetHeight; }
+  if(ix){ ix.style.top = top+'px'; top += ix.offsetHeight; }
+  if(app){ if(top>0){ app.style.marginTop = top+'px'; app.style.height = 'calc(100vh - '+top+'px)'; } else { app.style.marginTop=''; app.style.height=''; } }
+}
+// Persistent "building smarter search" indicator. Lives on <body> like the update
+// banner, so it survives screen re-renders (indexing continues while the user
+// navigates). Real X/Y chunk counts while building; a one-time model-download line
+// on first run; a distinct "semantic unavailable" state on error. NO em dashes —
+// a middot separator, matching the ingest progress copy.
+function renderIndexBanner(){
+  const e = state.embed || {};
+  const building = e.status==='building';
+  // Error surfaces from EITHER a failed background build (e.status) OR a failed LOAD
+  // of an EXISTING sidecar (overview.semanticError — a torn/corrupt/mismatched cache),
+  // so a returning user with a broken index sees the actionable banner, not a silent
+  // drop to keyword-only.
+  const error = !building && (e.status==='error' || !!state.semanticError) && !state.embedBannerDismissed;
+  const show = building || error;
+  let el = document.getElementById('calIndexBanner');
+  if(!show){ if(el) el.remove(); __layoutBanners(); return; }
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'calIndexBanner';
+    el.style.cssText = 'position:fixed;left:0;right:0;z-index:99998;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:8px 16px;font-family:var(--mono,monospace);font-size:12.5px;box-shadow:0 2px 12px rgba(0,0,0,.35)';
+    document.body.appendChild(el);
+  }
+  el.textContent = '';
+  el.style.color = 'var(--on-accent,#07060B)';
+  const msg = document.createElement('span');
+  msg.style.fontWeight = '500';
+  if(error){
+    el.style.background = 'var(--danger,#FF3355)';
+    msg.textContent = t('semantic search unavailable · keyword search works · re-index to retry','البحث الدلالي غير متاح · البحث بالكلمات يعمل · أعد الفهرسة');
+  } else {
+    el.style.background = 'var(--synapse,#FF2E88)';
+    if(e.phase==='model' && e.modelPct!=null){
+      msg.textContent = t('getting smarter search ready · downloading language model','نجهّز البحث الذكي · تنزيل النموذج اللغوي')+' '+e.modelPct+'%';
+    } else if(e.total>0){
+      msg.textContent = t('building smarter search','نُحسّن بحثك')+' · '+e.done+' / '+e.total;
+    } else {
+      msg.textContent = t('building smarter search','نُحسّن بحثك')+' …';
+    }
+  }
+  el.appendChild(msg);
+  if(error){
+    const x = document.createElement('button');
+    x.textContent = '✕'; x.title = t('dismiss','إخفاء'); x.setAttribute('aria-label','dismiss');
+    x.style.cssText = 'background:transparent;border:none;color:var(--on-accent,#07060B);font-size:14px;line-height:1;cursor:pointer;padding:2px 6px;opacity:.85';
+    x.onclick = ()=>{ state.embedBannerDismissed = true; renderIndexBanner(); };
+    el.appendChild(x);
+  }
+  requestAnimationFrame(()=>{ try{ __layoutBanners(); }catch(_){} });
+}
+// Poll /api/embed/status (~2.5s) while a background build runs; self-clears when it
+// leaves 'building'. Guarded by a flag so repeated starts (boot re-entry, every
+// re-index) never stack intervals. Re-callable: after it self-clears on done/error,
+// a later re-index starts a fresh poll.
+let embedPollOn = false;
+function startEmbedPoll(){
+  if(embedPollOn) return; embedPollOn = true;
+  state.embedBannerDismissed = false; // a new build clears a prior dismissed error
+  const iv = setInterval(async ()=>{
+    let r; try{ r = await api('/api/embed/status'); }catch(_){ return; } // transient — keep polling
+    if(r && r.httpStatus){ return; }                                     // server said no — keep polling
+    state.embed = r;
+    if(r.status==='done') state.semanticError = null; // a successful build clears any prior load-error banner
+    renderIndexBanner();
+    if(r.status!=='building'){
+      clearInterval(iv); embedPollOn = false;
+      // Refresh the cockpit whenever a build FINISHED — even if it completed so fast the
+      // poll never sampled 'building' (small brain + warm model). A returning user with an
+      // existing cache reports 'idle', not 'done', so this never fires spuriously.
+      if(r.status==='done'){
+        try{ await loadOverview(); if(state.screen==='overview' && $('#onboard').style.display==='none') render(); }catch(_){}
+      }
+    }
+  }, 2500);
 }
 // transient-failure retry (don't dump an existing user into onboarding on a blip)
 function showRetry(){
@@ -6851,6 +6941,7 @@ async function enterApp(){
   $('#onboard').style.display='none';
   state.screen='overview'; renderNav(); render();
   startLiveRefresh();
+  startEmbedPoll();
   maybeCheckUpdate();
   maybeTour(800);
 }
@@ -6930,6 +7021,7 @@ async function boot(){
   if(!hasBrain()){ if(state.overviewFailed){ showRetry(); return; } showOnboard('setup'); return; }
   render();
   startLiveRefresh();
+  startEmbedPoll();
   maybeCheckUpdate(true);   // check once per launch so the update banner surfaces promptly
   maybeTour(900);
 }

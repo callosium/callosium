@@ -404,22 +404,7 @@ function st_wire(){
   // signal the shell polls (the remote page has no Tauri IPC). On npm/npx there is
   // no bundled updater, so the releases page is the real path.
   const up = $('#stUpdateBtn');
-  if(up) up.addEventListener('click', async ()=>{
-    const onDesktop = !!(state.st_update && state.st_update.desktop);
-    const releases = ()=>window.open('https://github.com/callosium/callosium/releases','_blank','noopener');
-    if(onDesktop){
-      up.disabled = true;
-      let r=null; try{ r = await post('/api/desktop/update'); }catch(_){}
-      if(!r || r.queued!==true){
-        // couldn't hand off to the native updater — re-enable and give a real path
-        up.disabled = false;
-        releases();
-      }
-      // on success the native shell shows an "Install & restart?" dialog and takes over
-    } else {
-      releases();
-    }
-  });
+  if(up) up.addEventListener('click', ()=> doUpdate(up));   // shared with the update banner
 }
 
 // Called from nav() when Settings unmounts. It used to close a live re-index
@@ -520,6 +505,12 @@ async function st_signOut(){
     if(state.screen==='settings') renderSettings();
     return;
   }
+  // also end the Supabase session and clear its stored token — without this the
+  // persisted token silently signs the user back in on the next boot (the sign-out
+  // "just refreshes"). Mirrors the onboarding sign-out.
+  try{ const sb = (typeof sbEnsure==='function') ? await sbEnsure() : (typeof sbClient==='function' ? sbClient() : null); if(sb) await sb.auth.signOut(); }catch(_){}
+  try{ for(let i=localStorage.length-1;i>=0;i--){ const k=localStorage.key(i); if(k && /^sb-.*-auth-token/.test(k)) localStorage.removeItem(k); } }catch(_){}
+  state.ob_sbChecked = false;
   location.reload();                       // onboarding reappears on next boot
 }
 

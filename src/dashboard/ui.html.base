@@ -1300,15 +1300,62 @@ async function maybeCheckUpdate(force){
   try{
     const last = +(localStorage.getItem('callosium_last_update_check')||0);
     if(!force && Date.now()-last < UPDATE_CHECK_MS) {
-      // still surface a badge from the cached result on this load
+      // still surface a badge + banner from the cached result on this load
       if(state.st_update && state.st_update.updateAvailable){ state.updateBadge=true; renderNav(); }
+      renderUpdateBanner();
       return;
     }
     const r = await api('/api/update/check');
     localStorage.setItem('callosium_last_update_check', String(Date.now()));
     state.st_update = r;
     if(r && r.updateAvailable){ state.updateBadge = true; renderNav(); }
+    renderUpdateBanner();
   }catch(e){ /* offline / unreachable — ignore, Settings can retry manually */ }
+}
+// Shared "update" action for the Settings button AND the top banner. On desktop it
+// hands off to the native Tauri updater (a same-origin signal the shell polls); on
+// npm/npx there is no bundled updater, so it opens the releases page.
+async function doUpdate(btn){
+  const onDesktop = !!(state.st_update && state.st_update.desktop);
+  const releases = ()=>window.open('https://github.com/callosium/callosium/releases','_blank','noopener');
+  if(onDesktop){
+    if(btn) btn.disabled = true;
+    let r=null; try{ r = await post('/api/desktop/update'); }catch(_){}
+    if(!r || r.queued!==true){ if(btn) btn.disabled=false; releases(); }
+    // on success the native shell shows an "Install & restart?" dialog and takes over
+  } else {
+    releases();
+  }
+}
+// Persistent top banner while an update is available. Lives on <body>, so it
+// survives screen re-renders; the × dismisses it for this session (returns on next
+// launch). Shrinks #app beneath it so it never covers the header/nav.
+function renderUpdateBanner(){
+  const app = document.getElementById('app');
+  const show = !!(state.st_update && state.st_update.updateAvailable) && !state.updateBannerDismissed;
+  let el = document.getElementById('calUpdateBanner');
+  if(!show){ if(el) el.remove(); if(app){ app.style.marginTop=''; app.style.height=''; } return; }
+  const ver = (state.st_update && state.st_update.latest) ? ' (v'+state.st_update.latest+')' : '';
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'calUpdateBanner';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;padding:9px 16px;background:var(--amber,#E8A317);color:#0b0a0f;font-family:var(--mono,monospace);font-size:13px;box-shadow:0 2px 12px rgba(0,0,0,.45)';
+    document.body.appendChild(el);
+  }
+  el.textContent = '';
+  const msg = document.createElement('span');
+  msg.style.fontWeight = '500';
+  msg.textContent = t('A new version of Callosium is available'+ver+'.', 'يتوفّر إصدار جديد من كالوسيوم'+ver+'.');
+  const btn = document.createElement('button');
+  btn.textContent = t('Update now','حدّث الآن');
+  btn.style.cssText = 'background:#0b0a0f;color:var(--amber,#E8A317);border:none;padding:7px 16px;font-family:var(--mono,monospace);font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;cursor:pointer';
+  btn.onclick = ()=> doUpdate(btn);
+  const x = document.createElement('button');
+  x.textContent = '✕'; x.title = t('dismiss for now','إخفاء الآن'); x.setAttribute('aria-label','dismiss');
+  x.style.cssText = 'background:transparent;border:none;color:#0b0a0f;font-size:15px;line-height:1;cursor:pointer;padding:2px 6px;opacity:.85';
+  x.onclick = ()=>{ state.updateBannerDismissed = true; renderUpdateBanner(); };
+  el.appendChild(msg); el.appendChild(btn); el.appendChild(x);
+  requestAnimationFrame(()=>{ try{ const h = el.offsetHeight; if(app){ app.style.marginTop = h+'px'; app.style.height = 'calc(100vh - '+h+'px)'; } }catch(_){} });
 }
 // transient-failure retry (don't dump an existing user into onboarding on a blip)
 function showRetry(){
@@ -1390,6 +1437,13 @@ async function boot(){
     }
   }
   await loadAccount();
+  // Complete an OAuth sign-in (?code= in the URL) or restore a stored Supabase
+  // session before routing — otherwise a fresh Google login lands back on the
+  // welcome screen with the code unspent (ob_checkSupabaseSession routes on success).
+  if(!state.account && typeof ob_checkSupabaseSession==='function'){
+    try{ if(await ob_checkSupabaseSession()) return; }catch(_){}
+    try{ await loadAccount(); }catch(_){}
+  }
   await loadOverview(); await loadActivity();
   // gate: distinguish "genuinely no account" from "couldn't reach the engine".
   // A transient account OR overview failure must offer a retry — never re-onboard
@@ -1398,7 +1452,7 @@ async function boot(){
   if(!hasBrain()){ if(state.overviewFailed){ showRetry(); return; } showOnboard('setup'); return; }
   render();
   startLiveRefresh();
-  maybeCheckUpdate();
+  maybeCheckUpdate(true);   // check once per launch so the update banner surfaces promptly
   maybeTour(900);
 }
 boot();

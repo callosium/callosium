@@ -11,6 +11,11 @@ on:
   push:
     tags: ["desktop-v*"]
 
+# tauri-action creates the GitHub Release and uploads the signed installer +
+# latest.json, so the workflow token needs write access to repo contents.
+permissions:
+  contents: write
+
 jobs:
   build-windows:
     runs-on: windows-latest

@@ -84,7 +84,7 @@ eq('an empty key above a block list still reads the block',
 // ── round-trip against our OWN writer ────────────────────────────────────────
 // This is the case that proves real vaults already contain the breaking input:
 // serializeNote quotes a comma-bearing alias, so we must be able to read it back.
-for (const alias of ['Smith, John', "O'Brien", 'Al-Mannai, Hamza', 'Acme [Holdings]', 'a: b']) {
+for (const alias of ['Smith, John', "O'Brien", 'Al-Rashid, Omar', 'Acme [Holdings]', 'a: b']) {
   const text = serializeNote({ frontmatter: { type: 'person', aliases: [alias] }, body: '\nbody\n' });
   eq(`round-trip through serializeNote: ${JSON.stringify(alias)}`, aliasesOf(text), [alias]);
 }

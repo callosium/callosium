@@ -141,7 +141,7 @@ Once connected, your AI reads before it answers and files what it learns, withou
 
 Plenty of tools can point an AI at a folder of Markdown. What sets Callosium apart is everything that happens after that:
 
-- **It is measured, not asserted.** A 15,000-question benchmark ships in this repo. Run it against your own brain. Most "AI memory" is graded by the vendor that sells it. This you can check yourself. See [the proof](#the-proof).
+- **It is measured, not asserted.** The 15,000-question benchmark *generator* ships in this repo: it builds the test from your own vault, on your own machine, so you can check the numbers yourself. Your questions are never uploaded, and the author's own question set is deliberately kept out. Most "AI memory" is graded by the vendor that sells it. See [the proof](#the-proof).
 - **Every AI, scoped and attributed.** Connect Claude, Cursor, ChatGPT-compatible apps and more to the same brain. Each write is stamped with which AI made it, and you decide per-AI what each may even see.
 - **Nothing gets lost, whoever edits it.** Every note is versioned automatically, whether an AI wrote it through Callosium or you edited the file yourself in Obsidian. Delete a note by accident and it is still there. Versions are kept outside your notes folder, so your vault never grows because of them, and they cost about 900 bytes each, so a hundred thousand edits is under 100MB.
 - **No terminal to live in.** A local dashboard runs onboarding, the connection config for each AI, health checks, and search.

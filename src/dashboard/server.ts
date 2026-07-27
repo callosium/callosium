@@ -658,6 +658,85 @@ async function handleInspect(res: http.ServerResponse, body: Json) {
   send(res, 200, { path: dir, notes, hasSchema });
 }
 
+// A folder that must NEVER be a brain: the home ROOT, a drive/filesystem root, the
+// AppData tree, or a Windows system dir. Pointing the brain at one tries to scan
+// the whole machine — the exact trap that hung a real onboarding (config saved
+// C:\Users\<me>, and /api/overview then never returned). Used to refuse ingest.
+function isUnsafeBrainRoot(dir: string): boolean {
+  const norm = path.resolve(dir).replace(/[\\/]+$/, '').toLowerCase();
+  const home = path.resolve(os.homedir()).replace(/[\\/]+$/, '').toLowerCase();
+  if (!norm) return true;
+  if (norm === home) return true; // the user's home root itself
+  if (/^[a-z]:$/i.test(norm) || norm === '/') return true; // a drive root / filesystem root
+  const appdata = path.join(home, 'appdata');
+  if (norm === appdata || norm.startsWith(appdata + path.sep)) return true; // the AppData tree
+  // System dirs — block the whole SUBTREE (like AppData), not just the exact folder,
+  // so C:\Windows\System32 / C:\Program Files\App can't slip through; anchor to the
+  // real system drive (not a hardcoded C:) and include %windir%.
+  const sysDrive = (process.env.SystemDrive || 'C:').toLowerCase();
+  const sysDirs = [sysDrive + '\\windows', sysDrive + '\\program files', sysDrive + '\\program files (x86)', sysDrive + '\\programdata'];
+  if (process.env.windir) sysDirs.push(path.resolve(process.env.windir).toLowerCase());
+  for (const s of sysDirs) if (norm === s || norm.startsWith(s + path.sep)) return true;
+  return false;
+}
+
+// Native OS folder chooser. The dashboard's server runs IN the user's interactive
+// session, so it can pop the real OS dialog (Explorer on Windows, Finder on macOS)
+// — far less error-prone than the in-page folder browser + paste box, whose "use"
+// button silently connected the last-browsed dir, not the pasted path (which is how
+// a brain got pointed at the whole home directory). Returns {path} | {cancelled} | {error}.
+function handlePickFolder(res: http.ServerResponse): void {
+  let cmd: string;
+  let args: string[];
+  if (process.platform === 'win32') {
+    // Passed as -EncodedCommand (base64 UTF-16LE) to sidestep all quoting. A TopMost
+    // owner form pulls the dialog to the foreground; windowsHide hides the PS console.
+    const ps =
+      "$ProgressPreference = 'SilentlyContinue';" + // no 'preparing modules' record leaking to output
+      'Add-Type -AssemblyName System.Windows.Forms;' +
+      '$d = New-Object System.Windows.Forms.FolderBrowserDialog;' +
+      "$d.Description = 'Select your notes folder for Callosium';" +
+      '$d.ShowNewFolderButton = $true;' +
+      '$t = New-Object System.Windows.Forms.Form; $t.TopMost = $true; $t.ShowInTaskbar = $false;' +
+      '$r = $d.ShowDialog($t); $t.Dispose();' +
+      "if ($r -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($d.SelectedPath) }";
+    cmd = 'powershell';
+    args = ['-NoProfile', '-STA', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')];
+  } else if (process.platform === 'darwin') {
+    cmd = 'osascript';
+    args = ['-e', 'try', '-e', 'POSIX path of (choose folder with prompt "Select your notes folder for Callosium")', '-e', 'end try'];
+  } else {
+    cmd = 'zenity';
+    args = ['--file-selection', '--directory', '--title=Select your notes folder for Callosium'];
+  }
+  let out = '';
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const done = (payload: Json): void => {
+    if (settled) return;
+    settled = true;
+    if (timer) clearTimeout(timer);
+    send(res, 200, payload);
+  };
+  let child;
+  try {
+    child = spawn(cmd, args, { windowsHide: true });
+  } catch (e) {
+    return done({ error: 'native folder picker unavailable — ' + (e as Error).message });
+  }
+  // A dialog left open shouldn't leak a process forever; 5 min is far longer than
+  // any real pick and just reaps a truly abandoned one as a cancel.
+  timer = setTimeout(() => { try { child.kill(); } catch { /* ignore */ } done({ cancelled: true }); }, 5 * 60 * 1000);
+  child.stdout?.on('data', (d) => { out += d.toString(); });
+  child.on('error', (e) => done({ error: 'native folder picker unavailable — ' + e.message }));
+  child.on('close', () => {
+    const picked = out.trim();
+    if (!picked || !existsSync(picked)) return done({ cancelled: true }); // cancelled or a bogus path
+    browsedPaths.add(picked); // the user explicitly chose it → ingest may target it
+    done({ path: picked });
+  });
+}
+
 // Only one ingest may mutate brainPath/cache at a time — two concurrent runs
 // for different folders would race and whichever finished last would silently
 // win, leaving the served brain out of sync with what the UI last showed.
@@ -760,6 +839,7 @@ async function handleIngest(req: http.IncomingMessage, res: http.ServerResponse,
     // or system directory.
     if (dir !== brainPath && !browsedPaths.has(dir)) throw new Error('folder not permitted — pick it in the browser first');
     if (!existsSync(dir)) throw new Error('folder not found');
+    if (isUnsafeBrainRoot(dir)) throw new Error('That looks like your home or a system folder, not a notes folder — pick the specific folder your notes live in.');
     const vault = Vault.open(dir);
 
     emit('phase', { step: 'scan', label: 'reading your notes' });
@@ -1992,7 +2072,7 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
   // so a bare cross-site <img src>/GET must not be able to fire it. The UI issues
   // it as a hidden form POST, which still streams to disk (unlike fetch+blob,
   // which would buffer the whole archive in browser memory).
-  const postOnly = new Set(['/api/scope', '/api/revoke', '/api/pair', '/api/rotate', '/api/rename', '/api/browse', '/api/inspect', '/api/note/save', '/api/open-folder', '/api/signup', '/api/signout', '/api/init', '/api/export', '/api/link/preview', '/api/link/apply', '/api/cleanup/preview', '/api/cleanup/apply', '/api/health/dismiss', '/api/health/undismiss', '/api/history/restore', '/api/desktop/update']);
+  const postOnly = new Set(['/api/scope', '/api/revoke', '/api/pair', '/api/rotate', '/api/rename', '/api/browse', '/api/pick-folder', '/api/inspect', '/api/note/save', '/api/open-folder', '/api/signup', '/api/signout', '/api/init', '/api/export', '/api/link/preview', '/api/link/apply', '/api/cleanup/preview', '/api/cleanup/apply', '/api/health/dismiss', '/api/health/undismiss', '/api/history/restore', '/api/desktop/update']);
 
   // Per-launch caller token (P2 #13): defense-in-depth on top of the origin guard.
   // Minted fresh each launch, embedded in the served HTML (a <meta>), and echoed
@@ -2112,6 +2192,7 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
       if (url.pathname === '/api/scope') return await handleScope(res, await readBody(req));
       if (url.pathname === '/api/revoke') return await handleRevoke(res, await readBody(req));
       if (url.pathname === '/api/browse') return await handleBrowse(res, await readBody(req));
+      if (url.pathname === '/api/pick-folder') return handlePickFolder(res);
       if (url.pathname === '/api/inspect') return await handleInspect(res, await readBody(req));
       // /api/ingest doubles as re-index: with no ?path it re-ingests the current brain.
       if (url.pathname === '/api/ingest') return await handleIngest(req, res, url.searchParams.get('path') || brainPath || '');

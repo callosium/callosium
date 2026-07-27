@@ -357,34 +357,34 @@ function ob_choiceHTML(){
 
 // ── folder picker (shared by existing + create) ──
 function ob_pickerHTML(titleEn, titleAr, ctaEn, ctaAr, mode){
-  const b = state.ob_browse || { dir:'', parent:null, dirs:[], mdHere:0 };
   const sel = state.ob_selected;
-  // NOTE: hover styling is done in ob_wire via addEventListener — NEVER build
-  // inline on* handlers from folder paths (esc() doesn't neutralise ' and the
-  // handler runs in the page origin → XSS from a crafted folder name).
-  const rows = (b.dirs||[]).map(d=> '<button type="button" class="ob-dir" data-ob-dir="'+esc(d.path)+'" data-ob-sel="'+(d.path===sel?'1':'0')+'" style="display:flex;align-items:center;gap:9px;padding:9px 11px;border-radius:0;cursor:pointer;font-family:var(--mono);font-size:12.5px;color:'+(d.path===sel?'var(--starlight)':'var(--dust)')+';background:'+(d.path===sel?'var(--surface2)':'transparent')+';width:100%;border:0;text-align:left"><span style="color:var(--synapse-ink)">▸</span>'+esc(d.name)+'</button>').join('') || '<div style="padding:14px;font-family:var(--mono);font-size:11.5px;color:var(--faint)">'+t('no sub-folders here','لا مجلدات فرعية هنا')+'</div>';
   const info = state.ob_inspect ? (state.ob_inspect.notes+' '+t('notes found','ملاحظة') + (state.ob_inspect.hasSchema?' · '+t('existing brain','دماغ موجود'):'')) : '';
+  const noNotes = mode!=='create' && sel && state.ob_inspect && state.ob_inspect.notes===0;
   const canUse = mode==='create' ? !!sel : (state.ob_inspect && (state.ob_inspect.notes>0));
   return '<div style="min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;position:relative">'
     + ob_langToggle()
-    + '<div style="width:560px;max-width:100%">'
+    + '<div style="width:520px;max-width:100%">'
     + '<h1 style="font-family:var(--pixel);font-weight:700;font-size:28px;text-align:center;margin-bottom:8px">'+t(titleEn,titleAr)+'</h1>'
-    + '<p style="color:var(--dust);font-size:13.5px;text-align:center;margin-bottom:20px">'+t('everything stays on this device.','كل شيء يبقى على هذا الجهاز.')+'</p>'
-    + '<div style="border:1px solid var(--edge2);border-radius:0;background:var(--surface);overflow:hidden">'
-    + '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--edge);background:var(--surface2)">'
-    + (b.parent? '<button type="button" data-ob-dir="'+esc(b.parent)+'" style="cursor:pointer;font-family:var(--mono);font-size:12px;color:var(--synapse-ink);background:none;border:0;padding:0">↑ '+t('up','أعلى')+'</button>' : '')
-    + '<span style="flex:1;font-family:var(--mono);font-size:11px;color:var(--dust);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr;text-align:'+(state.lang==='ar'?'right':'left')+'">'+esc(b.dir||t('choose…','اختر…'))+'</span></div>'
-    + '<div style="max-height:280px;overflow:auto;padding:8px">'+rows+'</div>'
-    + (info? '<div style="padding:10px 14px;border-top:1px solid var(--edge);font-family:var(--mono);font-size:11.5px;color:var(--acid)">'+esc(info)+'</div>':'')
-    + '</div>'
-    // paste-a-path escape hatch — clicking down through OneDrive/Dropbox trees is
-    // painful; let the user paste the exact folder (copy it from the address bar
-    // in File Explorer) and jump straight there.
-    + '<div style="display:flex;gap:8px;margin-top:12px">'
-    + '<input id="obPath" spellcheck="false" autocomplete="off" placeholder="'+t('or paste a folder path here…','أو ألصق مسار مجلد هنا…')+'" aria-label="'+t('folder path','مسار المجلد')+'" value="'+esc(b.dir||'')+'" style="flex:1;min-width:0;background:var(--void);border:1px solid var(--edge2);border-radius:0;padding:10px 12px;font-family:var(--mono);font-size:12px;color:var(--starlight);box-sizing:border-box;direction:ltr">'
-    + '<button data-ob-goto="1" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--edge2);color:var(--dust);background:transparent;padding:10px 16px;border-radius:0;cursor:pointer;white-space:nowrap">'+t('go','اذهب')+'</button>'
-    + '</div>'
-    + '<div style="display:flex;gap:10px;margin-top:18px;justify-content:center">'
+    + '<p style="color:var(--dust);font-size:13.5px;text-align:center;margin-bottom:24px">'+t('everything stays on this device.','كل شيء يبقى على هذا الجهاز.')+'</p>'
+    // ONE action: open the real OS folder chooser (served locally, so it can). No
+    // in-page tree, no default-to-home, no paste-vs-select trap — you pick a real
+    // folder or nothing. The inline on* handlers here are STATIC (no path interpolated),
+    // so the folder-name-XSS note on the old row buttons does not apply.
+    + '<button data-ob-pick="1" style="width:100%;display:flex;align-items:center;justify-content:center;gap:12px;border:1px dashed var(--edge2);border-radius:0;background:var(--surface);padding:28px 20px;cursor:pointer;font-family:var(--pixel);font-weight:600;font-size:15px;color:var(--starlight)" onmouseover="this.style.borderColor=\'var(--synapse)\';this.style.background=\'rgba(255,46,136,.04)\'" onmouseout="this.style.borderColor=\'var(--edge2)\';this.style.background=\'var(--surface)\'">'
+    +   '<span style="font-size:22px;line-height:1">📁</span>'+(sel?t('Choose a different folder','اختر مجلدًا آخر'):t('Select your folder','اختر مجلدك'))+'</button>'
+    // the chosen folder + what we found inside it
+    + (sel? '<div style="margin-top:14px;border:1px solid '+(noNotes?'var(--danger)':'var(--edge2)')+';background:var(--surface);padding:12px 14px">'
+        + '<div style="font-family:var(--mono);font-size:11.5px;color:var(--starlight);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:ltr">'+esc(sel)+'</div>'
+        + (info? '<div style="font-family:var(--mono);font-size:11.5px;color:var(--acid);margin-top:6px">'+esc(info)+'</div>':'')
+        + (noNotes? '<div style="font-family:var(--mono);font-size:11px;color:var(--danger);margin-top:6px">'+t('no notes in this folder — pick the folder your .md notes live in','لا ملاحظات في هذا المجلد — اختر مجلد ملاحظاتك')+'</div>':'')
+        + '</div>' : '')
+    // paste fallback, tucked away so the default really is the single button
+    + '<details style="margin-top:12px"><summary style="font-family:var(--mono);font-size:11px;color:var(--faint);cursor:pointer">'+t('or paste a path','أو ألصق مسارًا')+'</summary>'
+    + '<div style="display:flex;gap:8px;margin-top:8px">'
+    + '<input id="obPath" spellcheck="false" autocomplete="off" placeholder="'+t('paste a folder path here…','ألصق مسار مجلد هنا…')+'" aria-label="'+t('folder path','مسار المجلد')+'" value="'+esc(sel||'')+'" style="flex:1;min-width:0;background:var(--void);border:1px solid var(--edge2);border-radius:0;padding:9px 11px;font-family:var(--mono);font-size:12px;color:var(--starlight);box-sizing:border-box;direction:ltr">'
+    + '<button data-ob-goto="1" style="font-family:var(--mono);font-size:12px;text-transform:uppercase;letter-spacing:.04em;border:1px solid var(--edge2);color:var(--dust);background:transparent;padding:9px 14px;border-radius:0;cursor:pointer;white-space:nowrap">'+t('go','اذهب')+'</button>'
+    + '</div></details>'
+    + '<div style="display:flex;gap:10px;margin-top:22px;justify-content:center">'
     + '<button data-ob="choice" style="font-family:var(--mono);font-size:12px;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--edge2);color:var(--dust);background:transparent;padding:12px 18px;border-radius:0;cursor:pointer">'+t('back','رجوع')+'</button>'
     + '<button data-ob-use="'+mode+'" '+(canUse?'':'disabled')+' style="font-family:var(--pixel);font-weight:600;font-size:13px;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--synapse);color:'+(canUse?'var(--synapse-ink)':'var(--faint)')+';background:transparent;padding:12px 22px;border-radius:0;cursor:'+(canUse?'pointer':'default')+';opacity:'+(canUse?'1':'.5')+'">'+t(ctaEn,ctaAr)+'</button>'
     + '</div>'
@@ -524,6 +524,21 @@ async function ob_selectDir(path){
   try{ const ins = await post('/api/inspect', { path }); state.ob_inspect = ins.error? null : ins; }catch(e){ state.ob_inspect=null; }
   renderOnboard(state.onboardPhase);
 }
+// Open the real OS folder chooser (the local server pops it on the user's desktop)
+// and adopt whatever they pick — routed through ob_selectDir so it inspects + enables
+// "use" exactly like the paste box. Cancel = no change. This is the singular, native
+// "select your folder" flow that replaces the confusing in-page browser + paste trap.
+async function ob_pickNative(){
+  if(state.ob_picking) return; state.ob_picking = true; // one dialog at a time (a fast double-click else pops two)
+  state.ob_err = null;
+  try{
+    let r; try{ r = await post('/api/pick-folder', {}); }catch(e){ state.ob_err = t('couldn’t open the folder picker','تعذّر فتح منتقي المجلدات'); renderOnboard(state.onboardPhase); return; }
+    if(r && r.httpStatus){ state.ob_err = t('couldn’t open the folder picker','تعذّر فتح منتقي المجلدات'); renderOnboard(state.onboardPhase); return; }
+    if(r && r.error){ state.ob_err = r.error; renderOnboard(state.onboardPhase); return; }
+    if(!r || r.cancelled || !r.path) return; // user closed the dialog — leave everything as-is
+    await ob_selectDir(r.path);
+  } finally { state.ob_picking = false; }
+}
 // Close the live stream + clear the stall watchdog. Safe to call repeatedly.
 function ob_ingestCleanup(){
   try{ if(state.ob_ingestES){ state.ob_ingestES.close(); state.ob_ingestES=null; } }catch(_){}
@@ -660,10 +675,11 @@ function ob_wire(){
     if(to==='signup') ob_nav('signup');
     else if(to==='hero') ob_nav('hero');
     else if(to==='choice') ob_nav('choice');
-    else if(to==='existing'){ ob_nav('existing'); ob_browse(null); }
+    else if(to==='existing'){ state.ob_selected=null; state.ob_inspect=null; state.ob_err=null; ob_nav('existing'); }
     // raw + blank share the create-a-brain picker; the door chosen decides
-    // which kickoff prompt the connect step hands the AI.
-    else if(to==='raw' || to==='blank' || to==='create'){ state.ob_createIntent = (to==='create') ? 'raw' : to; ob_nav('create'); ob_browse(null); }
+    // which kickoff prompt the connect step hands the AI. Start with NO folder
+    // selected (no default-to-home), so "use" stays disabled until a real pick.
+    else if(to==='raw' || to==='blank' || to==='create'){ state.ob_createIntent = (to==='create') ? 'raw' : to; state.ob_selected=null; state.ob_inspect=null; state.ob_err=null; ob_nav('create'); }
     else if(to==='enter') enterApp();
     else if(to==='cancelIngest') ob_ingestCancel();
     else if(to==='signout'){ try{ const sb=sbClient(); if(sb) sb.auth.signOut(); }catch(e){} post('/api/signout',{}).then(()=>{ state.account=null; state.ob_sbChecked=false; ob_nav('hero'); }); }
@@ -678,6 +694,8 @@ function ob_wire(){
     const gotoPath = ()=>{ const v = pathInp && pathInp.value ? pathInp.value.trim() : ''; if(v) ob_selectDir(v); };
     if(gotoBtn) gotoBtn.onclick = gotoPath;
     if(pathInp) pathInp.addEventListener('keydown', ev=>{ if(ev.key==='Enter'){ ev.preventDefault(); gotoPath(); } }); }
+  // the singular native "Select your folder" button → OS folder dialog
+  { const pickBtn = el.querySelector('[data-ob-pick]'); if(pickBtn) pickBtn.onclick = ob_pickNative; }
   el.querySelectorAll('.ob-dir').forEach(x=>{ // hover via listeners (no path-in-handler XSS)
     x.addEventListener('mouseenter', ()=>{ if(x.dataset.obSel!=='1') x.style.background='var(--surface2)'; });
     x.addEventListener('mouseleave', ()=>{ if(x.dataset.obSel!=='1') x.style.background='transparent'; });

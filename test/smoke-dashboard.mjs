@@ -63,6 +63,13 @@ try {
   ok('/api/embed/status WITH the token returns idle for no brain',
     embRes.status === 200 && emb.status === 'idle' && emb.done === 0 && emb.total === 0,
     JSON.stringify(emb));
+
+  // Native folder picker: token-gated + POST-only. We do NOT call it with a valid
+  // token here — that would pop a real OS dialog and block. The 403/405 checks both
+  // short-circuit BEFORE the handler runs, so no dialog appears.
+  ok('/api/pick-folder WITHOUT the token is refused (403)', (await fetch(`${BASE}/api/pick-folder`, { method: 'POST' })).status === 403);
+  ok('/api/pick-folder is POST-only (GET → 405)',
+    (await fetch(`${BASE}/api/pick-folder`, { headers: { 'x-callosium-token': token } })).status === 405);
 } finally {
   cleanup();
 }

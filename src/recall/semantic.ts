@@ -71,6 +71,58 @@ export function onModelProgress(cb: ((pct: number) => void) | null): void {
   modelProgressCb = cb;
 }
 
+/** Race a promise against a HARD timeout. The stall watchdog only covers the
+ *  model LOAD; inference (the probe and every real batch) needs its own bound
+ *  because a GPU-driver deadlock can HANG without ever throwing — and an
+ *  unguarded await there would freeze the whole ingest flow instead of letting
+ *  it fall back to CPU / degrade to keyword-only. The losing promise is left to
+ *  run (an orphaned native op we can't cancel) but its late settle is swallowed
+ *  so it never surfaces as an unhandled rejection. */
+async function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  p.catch(() => {}); // if the timeout wins first, don't let p's later reject go unhandled
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// ── Backend selection (GPU when reachable, else CPU) ───────────────────────
+// We already ship the onnxruntime-node native binding AND DirectML.dll, so the
+// only reason embedding ran CPU-only was that no `device` was ever set. DirectML
+// drives ANY Windows GPU — NVIDIA, AMD, or integrated Intel — and measured ~3×
+// faster than CPU on the reference box (RTX 4060: 10.6 → ~35 passages/sec) while
+// producing vectors that match CPU-q8 at cos≈0.999. Because the vectors match,
+// there is NO re-index and NO extra download: q8 stays the dtype on every backend
+// (it is the exact file already on disk), and an incremental index that mixes a
+// few CPU-built vectors with GPU-built ones is safe. CUDA is not compiled into
+// this ORT build (probe said: dml / webgpu / cpu only), so DirectML is the GPU
+// path. Policy:
+//   auto (default): GPU first on Windows, fall through to CPU on any load- or
+//     run-time failure. Non-Windows stays on the proven CPU path (DirectML is
+//     Windows-only; node-webgpu isn't dependable).
+//   force with CALLOSIUM_EMBED_DEVICE = cpu | dml | gpu.
+type EmbedDevice = 'dml' | 'cpu';
+let activeDevice: EmbedDevice | null = null;
+let gpuDisabled = false; // latched once a GPU run-time failure downgrades us
+/** Backend the live extractor is running on ('dml' = GPU), for logs/diagnostics. */
+export function embedDevice(): EmbedDevice | null {
+  return activeDevice;
+}
+function deviceCandidates(): EmbedDevice[] {
+  if (gpuDisabled) return ['cpu'];
+  const forced = (process.env.CALLOSIUM_EMBED_DEVICE || '').trim().toLowerCase();
+  if (forced === 'cpu') return ['cpu'];
+  if (forced === 'dml' || forced === 'gpu') return ['dml'];
+  return process.platform === 'win32' ? ['dml', 'cpu'] : ['cpu'];
+}
+
 let extractor: any = null;
 // Memoize the IN-FLIGHT load, not only the result. Indexing fires many embed
 // batches at once; without this each concurrent caller entered the load path
@@ -97,87 +149,160 @@ async function getExtractor() {
       // must NEVER leave the model in a deep node_modules path that blows Windows
       // MAX_PATH — so we always set an explicit, short cacheDir.
       env.cacheDir = process.env.CALLOSIUM_MODEL_DIR || defaultModelDir();
-      let last = -1;
-      let sawPartial = false;
-      let lastActivity = Date.now();
-      const load = pipeline('feature-extraction', MODEL, {
-        dtype: 'q8',
-        // Only the big weights file (>5MB) is surfaced — config/tokenizer files
-        // would just flicker the meter. CACHE LOADS emit a single 100% event
-        // (measured in the portable bundle: every fresh CLI process printed
-        // "downloading… 100%"), so nothing is shown until a genuinely partial
-        // event proves a real network download is in flight.
-        progress_callback: (p: any) => {
-          lastActivity = Date.now(); // any progress keeps the stall watchdog at bay
-          if (p?.status === 'progress' && p.total > 5_000_000) {
-            const pct = Math.min(100, Math.floor((p.loaded / p.total) * 100));
-            if (pct < 100) sawPartial = true;
-            if (pct !== last && sawPartial) {
-              last = pct;
-              modelProgressCb?.(pct); // dashboard SSE stream
-              termModelProgress(pct); // one redrawing terminal line
+
+      // Try each backend in order (GPU → CPU under 'auto'); the first that both
+      // loads AND passes a one-vector probe wins. The model download happens on
+      // the first pipeline() call and is cached, so a GPU→CPU fall-through never
+      // re-downloads. Every candidate gets its own progress meter + stall watchdog.
+      const candidates = deviceCandidates();
+      let lastErr: unknown = new Error('no embedding backend available');
+      for (const device of candidates) {
+        let last = -1;
+        let sawPartial = false;
+        let lastActivity = Date.now();
+        const load = pipeline('feature-extraction', MODEL, {
+          device,
+          dtype: 'q8',
+          // Only the big weights file (>5MB) is surfaced — config/tokenizer files
+          // would just flicker the meter. CACHE LOADS emit a single 100% event
+          // (measured in the portable bundle: every fresh CLI process printed
+          // "downloading… 100%"), so nothing is shown until a genuinely partial
+          // event proves a real network download is in flight.
+          progress_callback: (p: any) => {
+            lastActivity = Date.now(); // any progress keeps the stall watchdog at bay
+            if (p?.status === 'progress' && p.total > 5_000_000) {
+              const pct = Math.min(100, Math.floor((p.loaded / p.total) * 100));
+              if (pct < 100) sawPartial = true;
+              if (pct !== last && sawPartial) {
+                last = pct;
+                modelProgressCb?.(pct); // dashboard SSE stream
+                termModelProgress(pct); // one redrawing terminal line
+              }
             }
+          },
+        });
+        // Stall watchdog. The DOWNLOAD streams progress, but the onnxruntime LOAD
+        // after it is silent — and on some machines it hangs forever without ever
+        // throwing, which would trap onboarding on "learning what they mean" with
+        // nothing to catch. If nothing makes progress for STALL_MS we give up, so
+        // the caller falls back to keyword-only recall (a normal cold load is ~4s).
+        // Every progress event resets the timer, so a slow-but-live download or a
+        // genuinely long build never trips it.
+        const STALL_MS = 90_000;
+        let watchIv: ReturnType<typeof setInterval> | undefined;
+        const watchdog = new Promise<never>((_resolve, reject) => {
+          watchIv = setInterval(() => {
+            if (Date.now() - lastActivity > STALL_MS) {
+              reject(new Error(`embedding model stalled: no progress for ${STALL_MS / 1000}s`));
+            }
+          }, 5000);
+        });
+        let ex: any;
+        try {
+          ex = await Promise.race([load, watchdog]);
+          if (watchIv) {
+            clearInterval(watchIv); // load settled — stop the load watchdog before the probe
+            watchIv = undefined;
           }
-        },
-      });
-      // Stall watchdog. The DOWNLOAD streams progress, but the onnxruntime LOAD
-      // after it is silent — and on some machines it hangs forever without ever
-      // throwing, which would trap onboarding on "learning what they mean" with
-      // nothing to catch. If nothing makes progress for STALL_MS we give up, so
-      // the caller falls back to keyword-only recall (a normal cold load is ~4s).
-      // Every progress event resets the timer, so a slow-but-live download or a
-      // genuinely long build never trips it.
-      const STALL_MS = 90_000;
-      let watchIv: ReturnType<typeof setInterval> | undefined;
-      const watchdog = new Promise<never>((_resolve, reject) => {
-        watchIv = setInterval(() => {
-          if (Date.now() - lastActivity > STALL_MS) {
-            reject(new Error(`embedding model stalled: no progress for ${STALL_MS / 1000}s`));
+          // A GPU can LOAD yet fail the first real inference (driver quirk, a
+          // missing op in the EP, or a silent driver hang): prove it produces a
+          // finite vector — under its own hard timeout, since a hang here would
+          // otherwise freeze the whole flow — else fall through to the next backend.
+          const probe: any = await withTimeout(
+            ex(['query: ok'], { pooling: 'mean', normalize: true }),
+            STALL_MS,
+            `${device === 'dml' ? 'GPU' : 'CPU'} inference probe`,
+          );
+          if (!probe?.data?.length || !Number.isFinite(probe.data[0])) {
+            throw new Error('backend produced an empty or non-finite vector');
           }
-        }, 5000);
-      });
-      let ex: any;
-      try {
-        ex = await Promise.race([load, watchdog]);
-      } finally {
-        if (watchIv) clearInterval(watchIv);
+        } catch (e) {
+          lastErr = e;
+          if (device !== candidates[candidates.length - 1]) {
+            console.error(
+              `[callosium] semantic: ${device === 'dml' ? 'GPU (DirectML)' : device} backend unavailable, ` +
+                `falling back — ${(e as Error).message?.split('\n')[0]}`,
+            );
+          }
+          continue; // finally clears the watchdog before we move on
+        } finally {
+          if (watchIv) clearInterval(watchIv);
+        }
+        // Resolve the terminal line to "✓ ready" ONLY when a real download ran —
+        // a silent cache load (sawPartial stays false) prints nothing, keeping
+        // every normal run quiet.
+        if (sawPartial) termModelProgressDone();
+        activeDevice = device;
+        console.error(`[callosium] semantic: embedding on ${device === 'dml' ? 'GPU (DirectML)' : 'CPU'}`);
+        return ex;
       }
-      // Resolve the terminal line to "✓ ready" ONLY when a real download ran —
-      // a silent cache load (sawPartial stays false) prints nothing, keeping
-      // every normal run quiet.
-      if (sawPartial) termModelProgressDone();
-      return ex;
+      throw lastErr;
     })().catch((e) => {
       extractorP = null; // stay retryable — next call attempts the download again
-      throw new ModelUnavailableError(e);
+      throw e instanceof ModelUnavailableError ? e : new ModelUnavailableError(e);
     });
   }
   return (extractor = await extractorP);
 }
 
 export async function embedTexts(texts: string[], kind: 'query' | 'passage'): Promise<Float32Array[]> {
-  const ex = await getExtractor();
-  const out: Float32Array[] = [];
-  const BATCH = 16;
-  for (let i = 0; i < texts.length; i += BATCH) {
-    // 2000 is a runaway backstop only: chunking governs real size (CHUNK_CHARS
-    // 1400 + heading/kind prefixes fit comfortably). The old 1500 cut the tail
-    // off fully-loaded chunks, violating the no-truncation invariant.
-    const batch = texts.slice(i, i + BATCH).map((t) => `${kind}: ${t.slice(0, 2000)}`);
-    let res;
+  // At most two passes: if the GPU dies MID-run (OOM on a large batch, driver
+  // reset) we latch it off for the session and re-embed the whole set on CPU, so
+  // a flaky GPU yields a slow-but-correct index rather than a failed one. The
+  // load-time probe already caught GPUs that can't infer at all; this catches the
+  // ones that infer one vector then choke on a real batch.
+  for (let attempt = 0; ; attempt++) {
+    const ex = await getExtractor();
+    const gpu = activeDevice === 'dml';
+    // Batch sizing. GPU: larger batches keep the card busy (measured throughput
+    // plateaus by ~64 and 64 stays well inside modest VRAM, where 256 thrashed a
+    // 4GB card). CPU: batch is irrelevant to throughput — onnxruntime already
+    // uses every core per call — so keep it small for memory. Override with
+    // CALLOSIUM_EMBED_BATCH.
+    const envBatch = Number(process.env.CALLOSIUM_EMBED_BATCH);
+    const BATCH = Number.isFinite(envBatch) && envBatch >= 1 ? Math.floor(envBatch) : gpu ? 64 : 16;
+    const out: Float32Array[] = [];
     try {
-      res = await ex(batch, { pooling: 'mean', normalize: true });
+      // A batch is seconds even on a slow CPU; a two-minute wait means the backend
+      // has hung (GPU driver deadlock that never throws), not that it is merely slow.
+      const INFER_TIMEOUT = 120_000;
+      for (let i = 0; i < texts.length; i += BATCH) {
+        // 2000 is a runaway backstop only: chunking governs real size (CHUNK_CHARS
+        // 1400 + heading/kind prefixes fit comfortably). The old 1500 cut the tail
+        // off fully-loaded chunks, violating the no-truncation invariant.
+        const batch = texts.slice(i, i + BATCH).map((t) => `${kind}: ${t.slice(0, 2000)}`);
+        const res: any = await withTimeout(ex(batch, { pooling: 'mean', normalize: true }), INFER_TIMEOUT, 'embedding batch');
+        // A marginal GPU can return NaN/Inf rows WITHOUT throwing (the load probe
+        // only checks a single batch-1 vector). Unvalidated, those poison every
+        // cosine they touch — NaN sorts unpredictably and breaks the honesty gate.
+        // Treat a non-finite vector as a failure so the GPU→CPU latch below
+        // re-embeds the whole set correctly on the CPU.
+        for (let k = 0; k < res.data.length; k++) {
+          if (!Number.isFinite(res.data[k])) throw new Error('embedding produced a non-finite vector');
+        }
+        const [n, dims] = res.dims.length === 2 ? res.dims : [1, res.dims[0]];
+        for (let j = 0; j < n; j++) out.push(new Float32Array(res.data.slice(j * dims, (j + 1) * dims)));
+      }
+      return out;
     } catch (e) {
-      // Inference failures (native OOM, corrupted cache) must degrade exactly
-      // like a failed download: typed + retryable, never aborting the caller's
-      // whole connect/ingest flow with a raw native error.
+      // Drop the extractor either way so the next pass rebuilds it.
       extractor = null;
+      extractorP = null;
+      if (gpu && attempt === 0) {
+        // GPU run-time failure → latch it off and retry the WHOLE set on CPU.
+        gpuDisabled = true;
+        activeDevice = null;
+        console.error(
+          '[callosium] semantic: GPU embedding failed mid-run, switching to CPU — ' +
+            (e as Error).message?.split('\n')[0],
+        );
+        continue;
+      }
+      // CPU failure (or already retried): degrade exactly like a failed download —
+      // typed + retryable, never aborting the caller's whole connect/ingest flow.
       throw new ModelUnavailableError(e);
     }
-    const [n, dims] = res.dims.length === 2 ? res.dims : [1, res.dims[0]];
-    for (let j = 0; j < n; j++) out.push(new Float32Array(res.data.slice(j * dims, (j + 1) * dims)));
   }
-  return out;
 }
 
 /** Preload the embedding pipeline (and warm the first-inference path) so the

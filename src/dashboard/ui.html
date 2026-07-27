@@ -6218,11 +6218,11 @@ function ob_ingestStream(){
   // hang forever. Every event resets it; 60s of total silence trips the same
   // failure path as an error, freeing the user from the dead-end.
   const bump = ()=>{ if(state.ob_ingestWatchdog) clearTimeout(state.ob_ingestWatchdog);
-    state.ob_ingestWatchdog = setTimeout(()=>{ ob_ingestCleanup(); state.ob_err='ingest stalled — try again.'; state.ob_view='existing'; renderOnboard(state.onboardPhase); }, 60000); };
+    state.ob_ingestWatchdog = setTimeout(()=>{ ob_ingestCleanup(); state.ob_err='ingest stalled — try again.'; state.ob_view='existing'; renderOnboard(state.onboardPhase); }, 180000); };
   bump();
   es.addEventListener('phase', e=>{ bump(); try{ const d=JSON.parse(e.data); state.ob_ingest.step=d.step; state.ob_ingest.label=''; state.ob_ingest.pct = d.step==='scan'?15:d.step==='graph'?45:70; renderOnboard(state.onboardPhase); }catch(_){} });
   es.addEventListener('stat', e=>{ bump(); try{ const d=JSON.parse(e.data); if(d.notes) notes=d.notes; }catch(_){} });
-  es.addEventListener('embed', e=>{ bump(); try{ const d=JSON.parse(e.data); if(d.total){ state.ob_ingest.pct = 70 + Math.round((d.done/d.total)*28); renderOnboard(state.onboardPhase); } }catch(_){} });
+  es.addEventListener('embed', e=>{ bump(); try{ const d=JSON.parse(e.data); if(d.total){ state.ob_ingest.pct = 70 + Math.round((d.done/d.total)*28); state.ob_ingest.label = t('processing your notes','نعالج ملاحظاتك')+' · '+d.done+' / '+d.total; renderOnboard(state.onboardPhase); } }catch(_){} });
   // first run only: the ~120MB language model downloads once — show it as a
   // download, not a mysterious hang at 70%.
   es.addEventListener('model', e=>{ bump(); try{ const d=JSON.parse(e.data); state.ob_ingest.label = d.label || ''; renderOnboard(state.onboardPhase); }catch(_){} });

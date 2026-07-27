@@ -99,7 +99,8 @@ async function getExtractor() {
       env.cacheDir = process.env.CALLOSIUM_MODEL_DIR || defaultModelDir();
       let last = -1;
       let sawPartial = false;
-      const ex = await pipeline('feature-extraction', MODEL, {
+      let lastActivity = Date.now();
+      const load = pipeline('feature-extraction', MODEL, {
         dtype: 'q8',
         // Only the big weights file (>5MB) is surfaced — config/tokenizer files
         // would just flicker the meter. CACHE LOADS emit a single 100% event
@@ -107,6 +108,7 @@ async function getExtractor() {
         // "downloading… 100%"), so nothing is shown until a genuinely partial
         // event proves a real network download is in flight.
         progress_callback: (p: any) => {
+          lastActivity = Date.now(); // any progress keeps the stall watchdog at bay
           if (p?.status === 'progress' && p.total > 5_000_000) {
             const pct = Math.min(100, Math.floor((p.loaded / p.total) * 100));
             if (pct < 100) sawPartial = true;
@@ -118,6 +120,28 @@ async function getExtractor() {
           }
         },
       });
+      // Stall watchdog. The DOWNLOAD streams progress, but the onnxruntime LOAD
+      // after it is silent — and on some machines it hangs forever without ever
+      // throwing, which would trap onboarding on "learning what they mean" with
+      // nothing to catch. If nothing makes progress for STALL_MS we give up, so
+      // the caller falls back to keyword-only recall (a normal cold load is ~4s).
+      // Every progress event resets the timer, so a slow-but-live download or a
+      // genuinely long build never trips it.
+      const STALL_MS = 90_000;
+      let watchIv: ReturnType<typeof setInterval> | undefined;
+      const watchdog = new Promise<never>((_resolve, reject) => {
+        watchIv = setInterval(() => {
+          if (Date.now() - lastActivity > STALL_MS) {
+            reject(new Error(`embedding model stalled: no progress for ${STALL_MS / 1000}s`));
+          }
+        }, 5000);
+      });
+      let ex: any;
+      try {
+        ex = await Promise.race([load, watchdog]);
+      } finally {
+        if (watchIv) clearInterval(watchIv);
+      }
       // Resolve the terminal line to "✓ ready" ONLY when a real download ran —
       // a silent cache load (sawPartial stays false) prints nothing, keeping
       // every normal run quiet.

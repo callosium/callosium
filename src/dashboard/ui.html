@@ -6885,36 +6885,60 @@ function renderIndexBanner(){
   const show = building || error;
   let el = document.getElementById('calIndexBanner');
   if(!show){ if(el) el.remove(); __layoutBanners(); return; }
-  if(!el){
+  const mode = error ? 'error' : 'building';
+  // (Re)build the STRUCTURE only on first mount or an error<->building switch. Every
+  // ~2.5s status poll then only updates the text + bar width, so the shimmer animation
+  // runs UNINTERRUPTED (rebuilding it each poll would reset it and look stuttery).
+  if(!el || el.dataset.mode !== mode){
+    if(el) el.remove();
+    if(!document.getElementById('calBannerKf')){
+      const kf = document.createElement('style'); kf.id='calBannerKf';
+      kf.textContent = '@keyframes calShimmer{0%{transform:translateX(-140%)}100%{transform:translateX(320%)}}';
+      document.head.appendChild(kf);
+    }
     el = document.createElement('div');
-    el.id = 'calIndexBanner';
-    el.style.cssText = 'position:fixed;left:0;right:0;z-index:99998;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:8px 16px;font-family:var(--mono,monospace);font-size:12.5px;box-shadow:0 2px 12px rgba(0,0,0,.35)';
+    el.id = 'calIndexBanner'; el.dataset.mode = mode;
+    el.style.cssText = 'position:fixed;left:0;right:0;z-index:99998;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:8px 16px;font-family:var(--mono,monospace);font-size:12.5px;color:var(--on-accent,#07060B);box-shadow:0 2px 12px rgba(0,0,0,.35);background:'+(error?'var(--danger,#FF3355)':'var(--synapse,#FF2E88)');
+    const msgEl = document.createElement('span'); msgEl.id='calBannerMsg'; msgEl.style.fontWeight='500';
+    el.appendChild(msgEl);
+    if(error){
+      const x = document.createElement('button');
+      x.textContent = '✕'; x.title = t('dismiss','إخفاء'); x.setAttribute('aria-label','dismiss');
+      x.style.cssText = 'background:transparent;border:none;color:var(--on-accent,#07060B);font-size:14px;line-height:1;cursor:pointer;padding:2px 6px;opacity:.85';
+      x.onclick = ()=>{ state.embedBannerDismissed = true; renderIndexBanner(); };
+      el.appendChild(x);
+    } else {
+      // progress bar pinned to the banner's bottom edge: a real fill (done/total, or the
+      // model-download %) PLUS a continuously sliding shimmer, so it ALWAYS looks alive —
+      // even in the seconds between the batch-sized count jumps.
+      const track = document.createElement('div');
+      track.style.cssText = 'position:absolute;left:0;right:0;bottom:0;height:3px;background:rgba(0,0,0,.20);overflow:hidden';
+      const fill = document.createElement('div'); fill.id='calBannerFill';
+      fill.style.cssText = 'height:100%;width:8%;background:var(--on-accent,#07060B);opacity:.9;transition:width .5s ease';
+      const shim = document.createElement('div');
+      shim.style.cssText = 'position:absolute;top:0;bottom:0;width:32%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.85),transparent);animation:calShimmer 1.15s linear infinite';
+      track.appendChild(fill); track.appendChild(shim); el.appendChild(track);
+    }
     document.body.appendChild(el);
   }
-  el.textContent = '';
-  el.style.color = 'var(--on-accent,#07060B)';
-  const msg = document.createElement('span');
-  msg.style.fontWeight = '500';
+  // Per-poll update: text + bar width only (never touches the running shimmer).
+  const msg = document.getElementById('calBannerMsg');
   if(error){
-    el.style.background = 'var(--danger,#FF3355)';
-    msg.textContent = t('semantic search unavailable · keyword search works · re-index to retry','البحث الدلالي غير متاح · البحث بالكلمات يعمل · أعد الفهرسة');
+    if(msg) msg.textContent = t('semantic search unavailable · keyword search works · re-index to retry','البحث الدلالي غير متاح · البحث بالكلمات يعمل · أعد الفهرسة');
   } else {
-    el.style.background = 'var(--synapse,#FF2E88)';
+    let pct = null, txt;
     if(e.phase==='model' && e.modelPct!=null){
-      msg.textContent = t('getting smarter search ready · downloading language model','نجهّز البحث الذكي · تنزيل النموذج اللغوي')+' '+e.modelPct+'%';
+      pct = e.modelPct;
+      txt = t('getting smarter search ready · downloading language model','نجهّز البحث الذكي · تنزيل النموذج اللغوي')+' '+e.modelPct+'%';
     } else if(e.total>0){
-      msg.textContent = t('building smarter search','نُحسّن بحثك')+' · '+e.done+' / '+e.total;
+      pct = Math.min(99, Math.floor(e.done/e.total*100)); // never 100% until it's actually done
+      txt = t('building smarter search','نُحسّن بحثك')+' · '+e.done.toLocaleString()+' / '+e.total.toLocaleString()+' · '+pct+'%';
     } else {
-      msg.textContent = t('building smarter search','نُحسّن بحثك')+' …';
+      txt = t('building smarter search','نُحسّن بحثك')+' …';
     }
-  }
-  el.appendChild(msg);
-  if(error){
-    const x = document.createElement('button');
-    x.textContent = '✕'; x.title = t('dismiss','إخفاء'); x.setAttribute('aria-label','dismiss');
-    x.style.cssText = 'background:transparent;border:none;color:var(--on-accent,#07060B);font-size:14px;line-height:1;cursor:pointer;padding:2px 6px;opacity:.85';
-    x.onclick = ()=>{ state.embedBannerDismissed = true; renderIndexBanner(); };
-    el.appendChild(x);
+    if(msg) msg.textContent = txt;
+    const fill = document.getElementById('calBannerFill');
+    if(fill && pct!=null) fill.style.width = pct+'%';
   }
   requestAnimationFrame(()=>{ try{ __layoutBanners(); }catch(_){} });
 }

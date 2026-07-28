@@ -190,13 +190,26 @@ function renderSettings(){
   const checking = !!state.st_updChecking;
   const verNum = upd && upd.current ? upd.current : '';
   const checkLabel = checking ? t('checking…','...جارٍ التحقق') : t('check for updates','تحقّق من التحديثات');
-  let updStatus = '', showUpdateBtn = false;
+  let updStatus = '', showUpdateBtn = false, updNote = '';
   if(checking){ updStatus = t('checking for updates…','...جارٍ التحقق من التحديثات'); }
   else if(!upd){ updStatus = ''; }
   else if(upd.offline){ updStatus = t("couldn't reach updates · you're offline",'تعذّر الوصول إلى التحديثات · أنت دون اتصال'); }
   else if(upd.updateAvailable){ updStatus = t('update available: v'+(upd.latest||'?'),'يتوفّر تحديث: v'+(upd.latest||'؟')); showUpdateBtn = true; }
   else if(upd.current){ updStatus = t("you're up to date (v"+upd.current+')','أنت على أحدث إصدار (v'+upd.current+')'); }
-  const updStatusColor = showUpdateBtn ? 'var(--amber)' : (upd && upd.offline ? 'var(--faint)' : 'var(--acid)');
+  // in-app self-update (npm/npx path): the running state + its result override the status line
+  if(state.st_updating){ updStatus = t('updating… running npm, this can take up to a minute','...جارٍ التحديث، قد يستغرق دقيقة'); showUpdateBtn = false; }
+  else if(state.st_updateResult){
+    if(state.st_updateResult.ok){
+      updStatus = t('updated to v'+((upd&&upd.latest)||'latest')+' — restart to finish','تم التحديث — أعد التشغيل'); showUpdateBtn = false;
+      updNote = t('quit Callosium and start it again — e.g. run  callosium serve  (or  npx callosium@latest serve ).','أغلق كالوسيوم ثم شغّله من جديد.');
+    } else {
+      updStatus = t("couldn't update automatically — "+(state.st_updateResult.error||'the updater failed'),'تعذّر التحديث تلقائيًا');
+      updNote = t('run this yourself, then restart Callosium:\n  '+((state.st_updateResult&&state.st_updateResult.command)||'npm install -g callosium@latest'),'شغّل هذا بنفسك ثم أعد التشغيل:\n  npm install -g callosium@latest');
+    }
+  }
+  const updStatusColor = (state.st_updateResult && !state.st_updateResult.ok) ? 'var(--danger)'
+    : (state.st_updating || showUpdateBtn) ? 'var(--amber)'
+    : (upd && upd.offline ? 'var(--faint)' : 'var(--acid)');
 
   $('#screen').innerHTML = `
     <div style="max-width:760px;margin:0 auto;animation:rise .4s ease both">
@@ -279,7 +292,7 @@ function renderSettings(){
       <div style="${panelStyle};margin-bottom:14px">
         ${bar(L('about','حول'))}
         <div class="st-row" style="${rowTopN}">
-          <div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--starlight)">${L('version','الإصدار')}</div><div style="font-family:var(--mono);font-size:12px;color:var(--dust);margin-top:3px">Callosium ${verNum?'v'+esc(verNum):''} · ${L('local-first','محلي أولًا')}</div>${updStatus?`<div style="font-family:var(--mono);font-size:11px;color:${updStatusColor};margin-top:5px">${esc(updStatus)}</div>`:''}</div>
+          <div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--starlight)">${L('version','الإصدار')}</div><div style="font-family:var(--mono);font-size:12px;color:var(--dust);margin-top:3px">Callosium ${verNum?'v'+esc(verNum):''} · ${L('local-first','محلي أولًا')}</div>${updStatus?`<div style="font-family:var(--mono);font-size:11px;color:${updStatusColor};margin-top:5px">${esc(updStatus)}</div>`:''}${updNote?`<div style="font-family:var(--mono);font-size:11px;color:var(--dust);margin-top:5px;white-space:pre-wrap;line-height:1.5;word-break:break-word">${esc(updNote)}</div>`:''}</div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
             ${showUpdateBtn?`<button id="stUpdateBtn" style="font-family:var(--mono);font-size:11px;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--amber);color:var(--amber);background:transparent;padding:8px 14px;border-radius:0;cursor:pointer" onmouseenter="this.style.background='var(--amber)';this.style.color='var(--on-accent)'" onmouseleave="this.style.background='transparent';this.style.color='var(--amber)'">${L('update','تحديث')}</button>`:''}
             <button id="stCheckUpdates"${checking?' disabled':''} style="${st_btnStyle()};opacity:${checking?'.6':'1'};cursor:${checking?'default':'pointer'}" ${checking?'':`onmouseenter="this.style.borderColor='var(--synapse)';this.style.color='var(--synapse)'" onmouseleave="this.style.borderColor='var(--edge2)';this.style.color='var(--dust)'"`}>${esc(checkLabel)}</button>
@@ -292,7 +305,7 @@ function renderSettings(){
         ${reindexErr}
         ${st_uiOnlyNote(isDesktop
           ? t('this is the desktop app: “Update” downloads the new version, checks its signature, installs it and restarts. it also checks on its own at each launch.','هذا تطبيق سطح المكتب: «تحديث» ينزّل الإصدار الجديد ويتحقق من توقيعه ويثبّته ثم يعيد التشغيل. كما يتحقق تلقائيًا عند كل تشغيل.')
-          : t('running via npm or npx: “Update” opens the releases page. there is no built-in auto-updater outside the desktop app; this check just compares your version with GitHub.','التشغيل عبر npm أو npx: «تحديث» يفتح صفحة الإصدارات. لا يوجد محدّث تلقائي مدمج خارج تطبيق سطح المكتب؛ هذا الفحص يقارن إصدارك بما على GitHub فقط.'))}
+          : t('running via npm or npx: “Update” runs  npm install -g callosium@latest  for you, then asks you to restart (a command-line app can’t swap its own running process). The desktop app updates and restarts itself.','التشغيل عبر npm أو npx: «تحديث» يشغّل  npm install -g callosium@latest  نيابةً عنك ثم يطلب إعادة التشغيل. تطبيق سطح المكتب يحدّث نفسه ويعيد التشغيل تلقائيًا.'))}
       </div>
 
       <div style="font-family:var(--mono);font-size:11px;color:var(--faint);text-align:center;padding:8px 0 12px;line-height:1.7">${L('Callosium is local-first. your notes are just files —','كالوسيوم محلي أولًا. ملاحظاتك مجرد ملفات —')}<br>${L('delete the app anytime and keep everything.','احذف التطبيق في أي وقت واحتفظ بكل شيء.')}</div>

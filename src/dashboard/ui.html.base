@@ -1349,15 +1349,28 @@ async function maybeCheckUpdate(force){
 // npm/npx there is no bundled updater, so it opens the releases page.
 async function doUpdate(btn){
   const onDesktop = !!(state.st_update && state.st_update.desktop);
-  const releases = ()=>window.open('https://github.com/callosium/callosium/releases','_blank','noopener');
   if(onDesktop){
     if(btn) btn.disabled = true;
     let r=null; try{ r = await post('/api/desktop/update'); }catch(_){}
-    if(!r || r.queued!==true){ if(btn) btn.disabled=false; releases(); }
+    if(!r || r.queued!==true){ if(btn) btn.disabled=false; window.open('https://github.com/callosium/callosium/releases','_blank','noopener'); }
     // on success the native shell shows an "Install & restart?" dialog and takes over
-  } else {
-    releases();
+    return;
   }
+  // npm / npx: run the real update IN the app (no browser tab). A running Node CLI can't
+  // hot-swap its own process, so on success we ask for a one-line restart.
+  if(state.st_updating) return;
+  state.st_updating = true; state.st_updateResult = null;
+  if(btn){ btn.disabled = true; btn.dataset.o = btn.textContent; btn.textContent = t('updating…','...تحديث'); }
+  if(typeof renderUpdateBanner==='function') renderUpdateBanner();
+  if(state.screen==='settings') render();
+  announce(t('updating Callosium — running npm, this can take up to a minute','جارٍ تحديث كالوسيوم'));
+  let r=null; try{ r = await post('/api/self-update'); }catch(_){ r = { ok:false, error:'could not reach the updater' }; }
+  state.st_updating = false;
+  state.st_updateResult = r || { ok:false, error:'could not reach the updater' };
+  const latest = (state.st_update && state.st_update.latest) || 'latest';
+  announce(r && r.ok ? t('updated to v'+latest+' — restart Callosium to finish','تم التحديث — أعد تشغيل كالوسيوم') : t('update failed — '+((r&&r.error)||'unknown error'),'فشل التحديث'));
+  if(state.screen==='settings') render();
+  if(typeof renderUpdateBanner==='function') renderUpdateBanner();
 }
 // Persistent top banner while an update is available. Lives on <body>, so it
 // survives screen re-renders; the × dismisses it for this session (returns on next
@@ -1375,18 +1388,29 @@ function renderUpdateBanner(){
     document.body.appendChild(el);
   }
   el.textContent = '';
+  const updating = !!state.st_updating, res = state.st_updateResult;
   const msg = document.createElement('span');
   msg.style.fontWeight = '500';
-  msg.textContent = t('A new version of Callosium is available'+ver+'.', 'يتوفّر إصدار جديد من كالوسيوم'+ver+'.');
   const btn = document.createElement('button');
-  btn.textContent = t('Update now','حدّث الآن');
   btn.style.cssText = 'background:#0b0a0f;color:var(--amber,#E8A317);border:none;padding:7px 16px;font-family:var(--mono,monospace);font-size:12px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;cursor:pointer';
-  btn.onclick = ()=> doUpdate(btn);
+  let showBtn = true;
+  if(updating){
+    msg.textContent = t('Updating Callosium — running npm…','جارٍ تحديث كالوسيوم…');
+    btn.textContent = t('updating…','...تحديث'); btn.disabled = true; btn.style.opacity = '.6'; btn.style.cursor = 'default';
+  } else if(res && res.ok){
+    msg.textContent = t('Updated'+ver+' — restart Callosium to finish.','تم التحديث — أعد تشغيل كالوسيوم.'); showBtn = false;
+  } else if(res && !res.ok){
+    msg.textContent = t("Update didn't complete — "+(res.error||'please try again')+'.',"لم يكتمل التحديث.");
+    btn.textContent = t('Try again','أعد المحاولة'); btn.onclick = ()=> doUpdate(btn);
+  } else {
+    msg.textContent = t('A new version of Callosium is available'+ver+'.', 'يتوفّر إصدار جديد من كالوسيوم'+ver+'.');
+    btn.textContent = t('Update now','حدّث الآن'); btn.onclick = ()=> doUpdate(btn);
+  }
   const x = document.createElement('button');
   x.textContent = '✕'; x.title = t('dismiss for now','إخفاء الآن'); x.setAttribute('aria-label','dismiss');
   x.style.cssText = 'background:transparent;border:none;color:#0b0a0f;font-size:15px;line-height:1;cursor:pointer;padding:2px 6px;opacity:.85';
   x.onclick = ()=>{ state.updateBannerDismissed = true; renderUpdateBanner(); };
-  el.appendChild(msg); el.appendChild(btn); el.appendChild(x);
+  el.appendChild(msg); if(showBtn) el.appendChild(btn); el.appendChild(x);
   requestAnimationFrame(()=>{ try{ __layoutBanners(); }catch(_){} });
 }
 // Stacks the fixed top banners (update + index) and reserves exactly their

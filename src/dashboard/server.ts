@@ -1940,6 +1940,37 @@ async function handleDesktopUpdate(res: http.ServerResponse) {
   }
 }
 
+// ── SELF-UPDATE (npm/npx path): run `npm install -g callosium@latest` FROM the app so
+// the user never has to open a browser or hunt for a terminal. A running Node CLI can't
+// hot-swap its own process, so on success the UI asks for a one-line restart. Loopback +
+// token + origin gated (postOnly). The desktop shell uses the Tauri updater above instead.
+async function handleSelfUpdate(res: http.ServerResponse) {
+  if (process.env.CALLOSIUM_DESKTOP) return send(res, 200, { ok: false, desktop: true });
+  const command = 'npm install -g callosium@latest';
+  const result = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+    let child;
+    try {
+      // shell:true so Windows resolves npm.cmd; args are fixed (no user input), no injection surface.
+      child = spawn('npm', ['install', '-g', 'callosium@latest'], { windowsHide: true, shell: true });
+    } catch (e) {
+      return resolve({ ok: false, error: (e as Error).message });
+    }
+    let log = '';
+    const cap = (d: Buffer) => { log += d.toString(); if (log.length > 20000) log = log.slice(-20000); };
+    child.stdout?.on('data', cap);
+    child.stderr?.on('data', cap);
+    const timer = setTimeout(() => { try { child?.kill(); } catch { /* already gone */ } resolve({ ok: false, error: 'the update timed out after 3 minutes' }); }, 180_000);
+    child.on('error', (e) => { clearTimeout(timer); resolve({ ok: false, error: e.message.includes('ENOENT') ? 'npm was not found on your PATH' : e.message }); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve({ ok: true });
+      const tail = log.split('\n').map((s) => s.trim()).filter(Boolean).slice(-2).join(' ');
+      resolve({ ok: false, error: tail || ('npm exited with code ' + code) });
+    });
+  });
+  send(res, 200, { ...result, command });
+}
+
 // ── ACCOUNT: a LOCAL sign-in record (dummy social sign-up until the real
 // auth/subscription backend exists). No password, no email round-trip — just a
 // stored identity + plan so the app can gate free vs paid later. ──
@@ -2110,7 +2141,7 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
   // so a bare cross-site <img src>/GET must not be able to fire it. The UI issues
   // it as a hidden form POST, which still streams to disk (unlike fetch+blob,
   // which would buffer the whole archive in browser memory).
-  const postOnly = new Set(['/api/scope', '/api/revoke', '/api/pair', '/api/rotate', '/api/rename', '/api/browse', '/api/pick-folder', '/api/inspect', '/api/note/save', '/api/open-folder', '/api/signup', '/api/signout', '/api/init', '/api/export', '/api/link/preview', '/api/link/apply', '/api/cleanup/preview', '/api/cleanup/apply', '/api/health/dismiss', '/api/health/undismiss', '/api/history/restore', '/api/desktop/update']);
+  const postOnly = new Set(['/api/scope', '/api/revoke', '/api/pair', '/api/rotate', '/api/rename', '/api/browse', '/api/pick-folder', '/api/inspect', '/api/note/save', '/api/open-folder', '/api/signup', '/api/signout', '/api/init', '/api/export', '/api/link/preview', '/api/link/apply', '/api/cleanup/preview', '/api/cleanup/apply', '/api/health/dismiss', '/api/health/undismiss', '/api/history/restore', '/api/desktop/update', '/api/self-update']);
 
   // Per-launch caller token (P2 #13): defense-in-depth on top of the origin guard.
   // Minted fresh each launch, embedded in the served HTML (a <meta>), and echoed
@@ -2241,6 +2272,7 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
       if (url.pathname === '/api/export') return await handleExport(req, res);
       if (url.pathname === '/api/update/check') return await handleUpdateCheck(res);
       if (url.pathname === '/api/desktop/update') return await handleDesktopUpdate(res);
+      if (url.pathname === '/api/self-update') return await handleSelfUpdate(res);
       if (url.pathname === '/api/account') return await handleAccount(res);
       if (url.pathname === '/api/signup') return await handleSignup(res, await readBody(req));
       if (url.pathname === '/api/signout') return await handleSignout(res);

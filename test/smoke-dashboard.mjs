@@ -70,6 +70,13 @@ try {
   ok('/api/pick-folder WITHOUT the token is refused (403)', (await fetch(`${BASE}/api/pick-folder`, { method: 'POST' })).status === 403);
   ok('/api/pick-folder is POST-only (GET → 405)',
     (await fetch(`${BASE}/api/pick-folder`, { headers: { 'x-callosium-token': token } })).status === 405);
+
+  // Self-update (npm/npx path): token-gated + POST-only. We do NOT call it with a valid
+  // token here — that would run `npm i -g callosium@latest`. Both checks short-circuit
+  // BEFORE the handler runs, so no install happens.
+  ok('/api/self-update WITHOUT the token is refused (403)', (await fetch(`${BASE}/api/self-update`, { method: 'POST' })).status === 403);
+  ok('/api/self-update is POST-only (GET → 405)',
+    (await fetch(`${BASE}/api/self-update`, { headers: { 'x-callosium-token': token } })).status === 405);
 } finally {
   cleanup();
 }

@@ -70,6 +70,11 @@
   }
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;background:var(--void)}
+  /* Base app height as a RULE, not inline. __layoutBanners sets #app's INLINE height to
+     calc(100vh - bannerStack) while a banner shows and clears it to '' when none — if the
+     base 100vh lived inline, that clear wiped it too and #app collapsed to content height,
+     leaving a dead band below (the long-running "white space"/footer-gap bug). */
+  #app{height:100vh}
   a{color:var(--synapse-ink);text-decoration:none}
   ::-webkit-scrollbar{width:9px;height:9px}
   ::-webkit-scrollbar-thumb{background:var(--edge2);border-radius:0}
@@ -199,7 +204,7 @@
 <body>
 <a href="#screen" id="skipLink" style="position:absolute;left:-9999px;top:8px;z-index:100;font-family:var(--mono);font-size:12px;background:var(--surface);color:var(--starlight);border:1px solid var(--synapse);padding:8px 14px" onfocus="this.style.left='8px'" onblur="this.style.left='-9999px'">skip to main content</a>
 <div id="srLive" role="status" aria-live="polite" aria-atomic="true" style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0"></div>
-<div id="app" data-theme="dark" style="position:relative;height:100vh;width:100%;background:var(--void);color:var(--starlight);font-family:var(--sans);overflow:hidden;line-height:1.5">
+<div id="app" data-theme="dark" style="position:relative;width:100%;background:var(--void);color:var(--starlight);font-family:var(--sans);overflow:hidden;line-height:1.5">
 <script>/* apply the persisted theme before first paint (no flash of the wrong theme) */
 try{var __bt=localStorage.getItem('callosium_theme');if(__bt==='light'||__bt==='dark')document.getElementById('app').setAttribute('data-theme',__bt);}catch(e){}</script>
 
@@ -1299,7 +1304,10 @@ function reindex(){
 }
 
 // ── theme + clock ──
-function toggleTheme(){ state.theme = state.theme==='dark'?'light':'dark'; $('#app').setAttribute('data-theme',state.theme); try{ localStorage.setItem('callosium_theme', state.theme); }catch(e){} announce('theme: '+state.theme); }
+function toggleTheme(){ state.theme = state.theme==='dark'?'light':'dark'; $('#app').setAttribute('data-theme',state.theme); try{ localStorage.setItem('callosium_theme', state.theme); }catch(e){} announce('theme: '+state.theme);
+  // the Brain Map is a canvas, not CSS — its structural ink is theme-aware, so a
+  // live theme flip must force a static re-stroke (see map_ink in render-map).
+  if(state.screen==='map' && typeof map_refresh==='function'){ state.map_staticDirty=true; map_refresh(); } }
 function tick(){ const d=new Date(), p=n=>String(n).padStart(2,'0'); $('#hudClock').textContent=p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds()); }
 
 /* __SCREENS__ */

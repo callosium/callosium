@@ -41,6 +41,25 @@ function map_isLocked(part){ return part === 'Private'; }
 function map_hexA(hex, a){ const n = parseInt(String(hex).slice(1),16); return 'rgba('+(n>>16&255)+','+(n>>8&255)+','+(n&255)+','+a+')'; }
 function map_hide(id){ const el = document.getElementById(id); if(el) el.style.display = 'none'; }
 
+// ── theme-aware structural ink ──────────────────────────────────────────────
+// The partition palette + synapse pink read on either background and never
+// change. Only the STRUCTURAL colours flip — backdrop, web, dust, label plates,
+// crisp cores, hover/drag layers — so the light theme puts the brain on paper
+// instead of a black slab. Re-stroked whenever the theme toggles (toggleTheme
+// marks the static layer dirty + refreshes).
+function map_ink(){
+  if(typeof state !== 'undefined' && state.theme === 'light') return {
+    bg0:'#F5F3F8', bg1:'#E7E4EE', dust:'#ABA4BD', edge:'#5B5470', heart:'#2A2436',
+    veil:'rgba(241,239,246,0.55)', trace:'#463E5C', discMask:'#EFECF4', titleBg:'#FFFFFF',
+    labelBg:'rgba(247,245,250,0.82)', labelTrace:'#171220', labelText:'#39324A', pulseCore:'#B01863',
+  };
+  return {
+    bg0:'#0F0C11', bg1:'#07060B', dust:null, edge:'#8F86A8', heart:'#F4F1FA',
+    veil:'rgba(7,6,11,0.52)', trace:'#F3EEFF', discMask:'#0A0910', titleBg:'#07060B',
+    labelBg:'rgba(7,6,11,0.72)', labelTrace:'#F3EEFF', labelText:'#D8D3E4', pulseCore:'#FFD7E9',
+  };
+}
+
 // assign a stable colour per partition (known names keep their hue; others cycle
 // the palette in deterministic partition order)
 function map_colorAssign(parts){
@@ -283,6 +302,8 @@ function map_shell(){
 function map_showOverlay(kind){
   const ov = document.getElementById('mapOverlay'); if(!ov) return;
   if(kind === 'none'){ ov.style.display = 'none'; ov.innerHTML = ''; return; }
+  const ink = map_ink();
+  ov.style.background = 'radial-gradient(ellipse 80% 70% at 50% 45%, '+ink.bg0+', '+ink.bg1+')';
   ov.style.display = 'block';
   if(kind === 'loading'){
     ov.innerHTML = `<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px">
@@ -731,10 +752,12 @@ function map_renderStatic(W, H){
   state.map_staticCam = { x: cam.x, y: cam.y, z: cam.z };
   ctx.setTransform(sdpr, 0, 0, sdpr, 0, 0);
   ctx.clearRect(0, 0, W, H);
+  const ink = map_ink();
 
-  // console-dark backdrop with a faint central bloom (both themes, by design)
+  // backdrop with a faint central bloom — console-dark in the dark theme, paper
+  // in the light theme (structural colours flip with map_ink()).
   const bg = ctx.createRadialGradient(W / 2, H * 0.45, 10, W / 2, H * 0.45, Math.max(W, H) * 0.75);
-  bg.addColorStop(0, '#0F0C11'); bg.addColorStop(1, '#07060B');
+  bg.addColorStop(0, ink.bg0); bg.addColorStop(1, ink.bg1);
   ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
 
   ctx.save();
@@ -748,7 +771,7 @@ function map_renderStatic(W, H){
   // starfield dust
   for(const d of G.dust){
     if(d.x < vX0 || d.x > vX1 || d.y < vY0 || d.y > vY1) continue;
-    ctx.fillStyle = map_hexA(d.c, d.a);
+    ctx.fillStyle = map_hexA(ink.dust || d.c, d.a);
     ctx.fillRect(d.x - d.s / 2, d.y - d.s / 2, d.s, d.s);
   }
 
@@ -772,12 +795,12 @@ function map_renderStatic(W, H){
     ctx.globalAlpha = 1;
   };
   if(filt){
-    pass(e => e.a.folder !== filt && e.b.folder !== filt, '#8F86A8', 0.018);
-    pass(e => e.a.folder === filt && e.b.folder === filt, G.colorOf[filt] || '#8F86A8', 0.20);
-    pass(e => (e.a.folder === filt) !== (e.b.folder === filt), '#8F86A8', 0.05);
+    pass(e => e.a.folder !== filt && e.b.folder !== filt, ink.edge, 0.018);
+    pass(e => e.a.folder === filt && e.b.folder === filt, G.colorOf[filt] || ink.edge, 0.20);
+    pass(e => (e.a.folder === filt) !== (e.b.folder === filt), ink.edge, 0.05);
   } else {
-    pass(e => !e.bridge, '#8F86A8', 0.055);
-    pass(e => e.bridge, '#8F86A8', 0.085);
+    pass(e => !e.bridge, ink.edge, 0.055);
+    pass(e => e.bridge, ink.edge, 0.085);
   }
 
   // nodes: halo + crisp core, batched per partition colour. Orphans dim.
@@ -788,7 +811,7 @@ function map_renderStatic(W, H){
   }
   const minCore = 1.15 / cam.z; // keep the tiniest stars visible when zoomed out
   for(const [part, arr] of byPart){
-    const col = G.colorOf[part] || '#8F86A8';
+    const col = G.colorOf[part] || ink.edge;
     const dimPart = filt && filt !== part;
     // halo pass
     ctx.fillStyle = col;
@@ -809,7 +832,7 @@ function map_renderStatic(W, H){
       // crisp pixel heart on the bigger stars
       if(r * cam.z >= 2.6){
         ctx.globalAlpha = Math.min(1, a + 0.04);
-        ctx.fillStyle = '#F4F1FA';
+        ctx.fillStyle = ink.heart;
         const pxr = Math.max(0.7 / cam.z, r * 0.34);
         ctx.fillRect(n.x - pxr / 2, n.y - pxr / 2, pxr, pxr);
         ctx.fillStyle = col;
@@ -840,6 +863,7 @@ function map_draw(){
   const t0 = performance.now();
   const cv = state.map_cv; if(!cv || state.screen !== 'map') return;
   const G = state.map_graph; if(!G) return;
+  const ink = map_ink();
   const dpr = state.map_dpr || 1;
   const W = cv.width / dpr, H = cv.height / dpr;
   const ctx = cv.getContext('2d');
@@ -864,7 +888,7 @@ function map_draw(){
   if(focus){
     neigh = new Set([focus]);
     for(const e of (G.adj.get(focus) || [])){ neigh.add(e.a); neigh.add(e.b); }
-    ctx.fillStyle = 'rgba(7,6,11,0.52)';
+    ctx.fillStyle = ink.veil;
     ctx.fillRect(0, 0, W, H);
     ctx.save();
     ctx.translate(W / 2, H / 2); ctx.scale(cam.z, cam.z); ctx.translate(-cam.x, -cam.y);
@@ -874,7 +898,7 @@ function map_draw(){
     const aN = Math.min(0.62, Math.max(0.12, 26 / Math.max(1, fEdges.length)));
     const aB = Math.min(0.9, aN * 1.6);
     for(const e of fEdges){
-      ctx.strokeStyle = map_hexA('#F3EEFF', e.bridge ? aB : aN);
+      ctx.strokeStyle = map_hexA(ink.trace, e.bridge ? aB : aN);
       ctx.lineWidth = (e.bridge ? 1.7 : 1.2) / cam.z;
       ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke();
     }
@@ -885,7 +909,7 @@ function map_draw(){
       ctx.beginPath(); ctx.arc(n.x, n.y, r * 2.1, 0, 6.29); ctx.fill();
       ctx.fillStyle = map_hexA(n.col, 1);
       ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, 6.29); ctx.fill();
-      ctx.fillStyle = 'rgba(244,241,250,0.95)';
+      ctx.fillStyle = map_hexA(ink.heart, 0.95);
       const pxr = Math.max(0.8 / cam.z, r * 0.36);
       ctx.fillRect(n.x - pxr / 2, n.y - pxr / 2, pxr, pxr);
       if(n.hub){
@@ -917,7 +941,7 @@ function map_draw(){
       const s = 2.6 / cam.z;
       ctx.fillStyle = map_hexA(MAP_SYNAPSE, 0.28);
       ctx.fillRect(x - s, y - s, s * 2, s * 2);
-      ctx.fillStyle = map_hexA('#FFD7E9', 0.95);
+      ctx.fillStyle = map_hexA(ink.pulseCore, 0.95);
       ctx.fillRect(x - s / 2, y - s / 2, s, s);
     }
     ctx.restore();
@@ -933,11 +957,11 @@ function map_draw(){
     ctx.translate(W / 2, H / 2); ctx.scale(cam.z, cam.z); ctx.translate(-cam.x, -cam.y);
     const rr = Math.max(dragN.r, 1.15 / cam.z);
     const hx = dragN.homeX != null ? dragN.homeX : dragN.x, hy = dragN.homeY != null ? dragN.homeY : dragN.y;
-    ctx.fillStyle = '#0A0910';
+    ctx.fillStyle = ink.discMask;
     ctx.beginPath(); ctx.arc(hx, hy, rr * 2.1 + 5 / cam.z, 0, 6.29); ctx.fill();
     for(const e of (G.adj.get(dragN) || [])){
       const o = e.a === dragN ? e.b : e.a;
-      ctx.strokeStyle = map_hexA('#F3EEFF', e.bridge ? 0.75 : 0.55);
+      ctx.strokeStyle = map_hexA(ink.trace, e.bridge ? 0.75 : 0.55);
       ctx.lineWidth = (e.bridge ? 1.6 : 1.2) / cam.z;
       ctx.beginPath(); ctx.moveTo(dragN.x, dragN.y); ctx.lineTo(o.x, o.y); ctx.stroke();
     }
@@ -945,7 +969,7 @@ function map_draw(){
     ctx.beginPath(); ctx.arc(dragN.x, dragN.y, rr * 2.1, 0, 6.29); ctx.fill();
     ctx.fillStyle = map_hexA(dragN.col, 1);
     ctx.beginPath(); ctx.arc(dragN.x, dragN.y, rr * 1.15, 0, 6.29); ctx.fill();
-    ctx.fillStyle = 'rgba(244,241,250,0.95)';
+    ctx.fillStyle = map_hexA(ink.heart, 0.95);
     const pxr = Math.max(0.8 / cam.z, rr * 0.4);
     ctx.fillRect(dragN.x - pxr / 2, dragN.y - pxr / 2, pxr, pxr);
     ctx.strokeStyle = map_hexA(MAP_SYNAPSE, 0.95); ctx.lineWidth = 1.4 / cam.z;
@@ -985,6 +1009,7 @@ function map_draw(){
 // notes as the space allows.
 function map_drawLabels(ctx, W, H, cam, focus, neigh, sel, filt){
   const G = state.map_graph;
+  const ink = map_ink();
   const FONT = '10px "JetBrains Mono",monospace';
   const HUBFONT = '600 11px "JetBrains Mono",monospace';
   state.map_textW = state.map_textW || new Map();
@@ -1037,9 +1062,9 @@ function map_drawLabels(ctx, W, H, cam, focus, neigh, sel, filt){
     if(w == null){ w = ctx.measureText(label).width; wCache.set('P' + label, w); }
     if(hits(X - w / 2 - 5, Y - 8, w + 10, 16)) continue;
     blockRect(X - w / 2 - 5, Y - 8, w + 10, 16);
-    const col = G.colorOf[p] || '#8F86A8';
+    const col = G.colorOf[p] || ink.edge;
     const a = focus ? 0.16 : 0.55;
-    ctx.fillStyle = map_hexA('#07060B', Math.min(1, 0.55 * a * 2));
+    ctx.fillStyle = map_hexA(ink.titleBg, Math.min(1, 0.55 * a * 2));
     ctx.fillRect(X - w / 2 - 5, Y - 8, w + 10, 16);
     ctx.fillStyle = map_hexA(col, a);
     ctx.fillText(label, X - w / 2, Y);
@@ -1098,12 +1123,12 @@ function map_drawLabels(ctx, W, H, cam, focus, neigh, sel, filt){
     blockRect(at[2], at[3], at[4], at[5]);
     count++;
     // halo behind the text so it reads over edges
-    ctx.fillStyle = 'rgba(7,6,11,0.72)';
+    ctx.fillStyle = ink.labelBg;
     ctx.fillRect(at[0] - 2, at[1] - 1, w + 4, h + 2);
     let col, alpha;
     if(n.hub){ col = MAP_SYNAPSE; alpha = 1; }
-    else if(inTrace){ col = '#F3EEFF'; alpha = 0.96; }
-    else { col = '#D8D3E4'; alpha = 0.86; }
+    else if(inTrace){ col = ink.labelTrace; alpha = 0.96; }
+    else { col = ink.labelText; alpha = 0.86; }
     if(filt && filt !== n.folder) alpha *= 0.3;
     ctx.fillStyle = map_hexA(col, alpha);
     ctx.fillText(txt, at[0], at[1] + h / 2);

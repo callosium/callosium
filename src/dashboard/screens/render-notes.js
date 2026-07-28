@@ -456,17 +456,43 @@ function notesHistoryOverlayHTML(){
   return '<div id="notesHistOverlay" style="position:absolute;inset:0;background:var(--void);display:flex;flex-direction:column;z-index:20">'
     + '<div style="display:flex;align-items:center;gap:12px;padding:15px 22px;border-bottom:1px solid var(--edge)">'
     + '<div style="flex:1;font-family:var(--pixel);font-size:14px;color:var(--starlight)">'+t('version history','سجل النسخ')+'</div>'
+    + (Array.isArray(vs) && vs.length>=2 ? '<button data-hist-diff="'+esc(vs[1].oid)+'" class="nt-tb" style="font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--synapse);color:var(--synapse);background:transparent;padding:8px 12px;border-radius:0;cursor:pointer">'+(state.notes_histDiffOid===vs[1].oid?t('hide diff','إخفاء الفرق'):t('⇄ diff latest change','⇄ فرق آخر تغيير'))+'</button>' : '')
     + '<button id="notesHistClose" class="nt-btn-cancel" style="font-family:var(--mono);font-size:11px;text-transform:uppercase;border:1px solid var(--edge2);color:var(--faint);background:transparent;padding:8px 12px;cursor:pointer">'+t('close','إغلاق')+'</button></div>'
     + '<div style="flex:1;overflow:auto;padding:16px 22px">'+inner+'</div></div>';
 }
 function notesDiffHTML(diff){
   if(diff === null) return '<span style="color:var(--faint)">'+t('loading…','…')+'</span>';
   if(!diff || !diff.length) return '<span style="color:var(--faint)">'+t('no line changes','لا تغييرات')+'</span>';
-  return diff.slice(0, 400).map(d=>{
-    const c = d.t==='+' ? 'var(--acid)' : d.t==='-' ? 'var(--danger)' : 'var(--faint)';
-    const bg = d.t==='+' ? 'rgba(82,242,184,.08)' : d.t==='-' ? 'rgba(255,51,85,.08)' : 'transparent';
-    return '<div style="color:'+c+';background:'+bg+';white-space:pre-wrap;word-break:break-word">'+esc((d.t==='+'?'+ ':d.t==='-'?'- ':'  ')+d.text)+'</div>';
-  }).join('') + (diff.length>400 ? '<div style="color:var(--faint);margin-top:6px">…('+(diff.length-400)+' more lines)</div>' : '');
+  // Show ONLY what changed: keep every +/- line plus CTX lines of context around each
+  // change, and fold longer unchanged runs into a "N unchanged lines" divider (like
+  // Obsidian Git). The full line-diff came from the server; we just collapse it here so
+  // a big note doesn't render the whole document.
+  const CTX = 3;
+  const keep = new Array(diff.length).fill(false);
+  let changes = 0;
+  for(let i=0;i<diff.length;i++){
+    if(diff[i].t==='+' || diff[i].t==='-'){ changes++;
+      for(let j=Math.max(0,i-CTX); j<=Math.min(diff.length-1,i+CTX); j++) keep[j]=true;
+    }
+  }
+  if(!changes) return '<span style="color:var(--faint)">'+t('no line changes · identical to the current version','لا تغييرات · مطابقة للنسخة الحالية')+'</span>';
+  const out=[]; let i=0, shown=0; const MAX=800;
+  while(i<diff.length){
+    if(keep[i]){
+      if(shown>=MAX){ out.push('<div style="color:var(--faint);margin-top:6px">…</div>'); break; }
+      const d=diff[i];
+      const c = d.t==='+' ? 'var(--acid)' : d.t==='-' ? 'var(--danger)' : 'var(--faint)';
+      const bg = d.t==='+' ? 'rgba(82,242,184,.08)' : d.t==='-' ? 'rgba(255,51,85,.08)' : 'transparent';
+      out.push('<div style="color:'+c+';background:'+bg+';white-space:pre-wrap;word-break:break-word">'+esc((d.t==='+'?'+ ':d.t==='-'?'- ':'  ')+d.text)+'</div>');
+      shown++; i++;
+    } else {
+      let j=i; while(j<diff.length && !keep[j]) j++;
+      const n=j-i;
+      out.push('<div style="color:var(--faint);text-align:center;padding:3px 0;margin:3px 0;border-top:1px dashed var(--edge);border-bottom:1px dashed var(--edge);font-size:10.5px;letter-spacing:.03em">'+t('⋯ '+n+' unchanged line'+(n===1?'':'s'),'⋯ '+n+' سطر بلا تغيير')+'</div>');
+      i=j;
+    }
+  }
+  return out.join('');
 }
 async function notesOpenHistory(){
   const p = state.notes_selected; if(!p) return;

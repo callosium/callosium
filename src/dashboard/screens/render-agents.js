@@ -373,27 +373,47 @@ function agentsLinkModal(){
   let inner = '';
 
   if(step === 0){
-    const presets = AG_PRESETS.map((app, pi) => `
-        <button type="button" data-ag-preset="${esc(app.id)}"${pi===0?' data-autofocus':''} style="display:flex;align-items:center;gap:13px;border:1px solid var(--edge2);border-radius:0;padding:13px 15px;cursor:pointer;transition:.14s;background:none;text-align:left;font-family:inherit">
-          <span style="width:36px;height:36px;flex-shrink:0;border-radius:0;background:var(--surface2);border:1px solid var(--edge2);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:16px;color:${app.accent}">${esc(app.glyph)}</span>
-          <div style="flex:1"><div style="font-family:var(--grot);font-weight:600;font-size:14px;color:var(--starlight)">${esc(app.name)}</div><div style="font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:2px">${esc(app.detail)}</div></div>
-          <span style="font-family:var(--mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--synapse-ink)">prefill →</span>
-        </button>`).join('');
-    const inputStyle = 'width:100%;background:var(--void);border:1px solid var(--edge2);border-radius:0;padding:9px 11px;font-family:var(--mono);font-size:12.5px;color:var(--starlight);box-sizing:border-box';
+    const inputStyle = 'width:100%;background:var(--void);border:1px solid var(--edge2);border-radius:0;padding:10px 12px;font-family:var(--mono);font-size:13px;color:var(--starlight);box-sizing:border-box';
     const err = state.ag_linkErr ? `<div role="alert" style="font-family:var(--mono);font-size:11px;color:var(--danger);margin-top:10px">${esc(state.ag_linkErr)}</div>` : '';
-    inner = `
-      <div style="padding:22px">
-        <div style="font-family:var(--pixel);font-weight:600;font-size:19px;margin-bottom:6px">which AI are we connecting?</div>
-        <div style="font-size:13px;color:var(--dust);margin-bottom:18px">pick one to prefill, or name any AI. Callosium hands it a scoped connection you paste into its settings — no keys leave this device.</div>
-        <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:18px">${presets}</div>
-        <div style="display:flex;flex-direction:column;gap:9px">
-          <input id="agLinkName" placeholder="display name — e.g. Gemini" aria-label="display name" value="${esc(state.ag_linkName||'')}" style="${inputStyle}">
-          <input id="agLinkId" placeholder="short id — e.g. gemini" aria-label="short id" value="${esc(state.ag_linkId||'')}" style="${inputStyle}">
-        </div>
-        ${err}
-        <button data-ag-act="pair" style="width:100%;margin-top:16px;font-family:var(--pixel);font-weight:500;font-size:13px;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--synapse);color:var(--synapse-ink);background:transparent;padding:12px;border-radius:0;cursor:pointer">connect</button>
-        <div style="font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:14px;text-align:center">every link stays on this device · nothing is sent anywhere</div>
-      </div>`;
+    if(!state.ag_linkPicked){
+      // 0a — searchable dropdown to PICK the AI (replaces the old prefill-card grid).
+      // Selecting one carries its id into the guide (so the connected step shows that
+      // client's exact setup) and swaps to the "name it" sub-view below.
+      const clients = (typeof CALLOSIUM_AI_CLIENTS !== 'undefined' ? CALLOSIUM_AI_CLIENTS : []);
+      const items = clients.map(x =>
+        `<button type="button" class="ag-ai-item" data-ag-pick="${esc(x.id)}" data-ag-pick-name="${esc(x.name)}" data-ai-name="${esc(x.name.toLowerCase())}" style="display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;border:0;border-bottom:1px solid var(--edge);background:transparent;padding:10px 12px;cursor:pointer;text-align:left">${(window.callosiumGlyphBadge?callosiumGlyphBadge(x.id,22):'')}<span style="font-family:var(--mono);font-size:12.5px;color:var(--dust);white-space:nowrap">${esc(x.name)}</span></button>`).join('')
+        + `<button type="button" class="ag-ai-item" data-ag-pick="__other__" data-ag-pick-name="" data-ai-name="something else other custom any ai" style="display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;border:0;background:transparent;padding:10px 12px;cursor:pointer;text-align:left"><span style="width:22px;height:22px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border:1px solid var(--edge2);color:var(--dust);font-family:var(--mono);font-size:13px">+</span><span style="font-family:var(--mono);font-size:12.5px;color:var(--dust)">something else — name any AI</span></button>`;
+      inner = `
+        <div style="padding:22px">
+          <div style="font-family:var(--pixel);font-weight:600;font-size:19px;margin-bottom:6px">which AI are we connecting?</div>
+          <div style="font-size:13px;color:var(--dust);margin-bottom:18px">search the list and pick one — or choose "something else" to name any AI. Callosium hands it a scoped connection you paste into its settings; no keys leave this device.</div>
+          <div id="agAiDd" style="position:relative">
+            <input id="agAiSearch" autocomplete="off" spellcheck="false" placeholder="search for your AI…" aria-label="search for your AI" data-autofocus style="width:100%;box-sizing:border-box;background:var(--void);border:1px solid var(--edge2);border-radius:0;padding:11px 34px 11px 12px;font-family:var(--mono);font-size:13px;color:var(--starlight);cursor:pointer">
+            <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--faint);pointer-events:none;font-size:11px">▾</span>
+            <div id="agAiDdList" role="listbox" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:40;max-height:260px;overflow:auto;border:1px solid var(--synapse);background:var(--surface);box-shadow:0 10px 28px rgba(0,0,0,.55)">${items}</div>
+          </div>
+          ${err}
+          <div style="font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:16px;text-align:center">every link stays on this device · nothing is sent anywhere</div>
+        </div>`;
+    } else {
+      // 0b — name it (display name + short id, prefilled from the pick)
+      const gl = state.ag_linkGlyph || '+', acc = state.ag_linkAccent || 'var(--synapse)';
+      inner = `
+        <div style="padding:22px">
+          <button data-ag-act="linkBack" style="font-family:var(--mono);font-size:11px;color:var(--faint);background:transparent;border:0;cursor:pointer;padding:0 0 2px;margin-bottom:14px">← back</button>
+          <div style="display:flex;align-items:center;gap:11px;margin-bottom:14px">
+            <span style="width:34px;height:34px;flex-shrink:0;border-radius:0;background:var(--surface2);border:1px solid var(--edge2);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:15px;color:${acc}">${esc(gl)}</span>
+            <div style="font-family:var(--pixel);font-weight:600;font-size:18px">name this connection</div>
+          </div>
+          <div style="font-size:12.5px;color:var(--dust);margin-bottom:14px">what should it be called in your agents list? You can rename it later.</div>
+          <div style="display:flex;flex-direction:column;gap:9px">
+            <input id="agLinkName" placeholder="display name — e.g. Claude" aria-label="display name" value="${esc(state.ag_linkName||'')}" data-autofocus style="${inputStyle}">
+            <input id="agLinkId" placeholder="short id — e.g. claude" aria-label="short id" value="${esc(state.ag_linkId||'')}" style="${inputStyle}">
+          </div>
+          ${err}
+          <button data-ag-act="pair" style="width:100%;margin-top:16px;font-family:var(--pixel);font-weight:500;font-size:13px;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--synapse);color:var(--synapse-ink);background:transparent;padding:12px;border-radius:0;cursor:pointer">connect</button>
+        </div>`;
+    }
   } else if(step === 1){
     const gl = state.ag_linkGlyph || '+', acc = state.ag_linkAccent || 'var(--synapse)';
     inner = `
@@ -497,6 +517,23 @@ function agentsWire(){
   if(nameEl) nameEl.oninput = e => { state.ag_linkName = e.target.value; };
   if(idEl)   idEl.oninput   = e => { state.ag_linkId = e.target.value; };
 
+  // step-0 AI picker: searchable dropdown (filter as you type; a pick advances to "name it")
+  (function(){
+    const inp = scr.querySelector('#agAiSearch'), list = scr.querySelector('#agAiDdList');
+    if(!inp || !list) return;
+    const items = [].slice.call(list.querySelectorAll('.ag-ai-item'));
+    const filter = q => { q=(q||'').trim().toLowerCase(); items.forEach(it=>{ it.style.display = (!q || (it.dataset.aiName||'').indexOf(q)>=0) ? 'flex' : 'none'; }); };
+    const open = ()=>{ list.style.display='block'; }, close = ()=>{ list.style.display='none'; };
+    inp.addEventListener('focus', ()=>{ filter(''); open(); });
+    inp.addEventListener('input', ()=>{ open(); filter(inp.value); });
+    inp.addEventListener('blur', ()=>{ setTimeout(close, 160); });   // let an item click land first
+    inp.addEventListener('keydown', e=>{
+      if(e.key==='Escape'){ close(); }
+      else if(e.key==='Enter'){ const f=items.find(it=>it.style.display!=='none'); if(f){ e.preventDefault(); f.click(); } }
+    });
+    items.forEach(b=> b.onclick = e => { e.stopPropagation(); ag_pickAi(b.dataset.agPick, b.dataset.agPickName); });
+  })();
+
   // per-AI setup guide inside the "connected" step (client picker + config/rules copy)
   if(scr.querySelector('[data-guide-client]') && window.callosiumGuideWire) callosiumGuideWire(scr, ag_serverSpec(), agentsPaint);
 
@@ -508,6 +545,7 @@ function agentsWire(){
       if(act === 'retry'){ renderAgents(); return; }
       if(act === 'openLink'){ ag_openLink(); return; }
       if(act === 'closeLink'){ ag_closeLink(); return; }
+      if(act === 'linkBack'){ state.ag_linkPicked = false; state.ag_linkErr = null; agentsPaint(); return; }
       if(act === 'pair'){ ag_pair(); return; }
       if(act === 'copyConfig'){ ag_copyConfig(el); return; }
       if(act === 'finishLink'){ ag_finishLink(); return; }
@@ -541,8 +579,26 @@ function agentsWire(){
 function ag_openLink(){
   state.ag_linkOpen = true; state.ag_linkStep = 0; state.ag_linkErr = null;
   state.ag_linkName = ''; state.ag_linkId = ''; state.ag_pairConfig = null; state.ag_rotated = false;
+  state.ag_linkPicked = false;   // start on the searchable AI dropdown (0a), not the name form
   state.ag_modalFrom = 'openLink';
   agentsPaint();
+}
+// A pick from the step-0 dropdown: prefill the display name + short id from the chosen
+// client, point the connected-step guide at it (ai_guide_client), and swap to "name it".
+function ag_pickAi(id, name){
+  state.ag_linkErr = null;
+  if(id === '__other__'){
+    state.ag_linkName = ''; state.ag_linkId = '';
+  } else {
+    state.ag_linkName = name || id;
+    state.ag_linkId = id;
+    state.ai_guide_client = id;                 // the connected step shows THIS client's setup
+  }
+  const m = ag_meta({ id: state.ag_linkId || id, displayName: state.ag_linkName });
+  state.ag_linkGlyph = m.glyph; state.ag_linkAccent = m.accent;
+  state.ag_linkPicked = true;
+  agentsPaint();
+  setTimeout(()=>{ const el = document.getElementById('agLinkName'); if(el){ el.focus(); el.select(); } }, 0);
 }
 function ag_closeLink(){
   // detach the dialog binding BEFORE the repaint drops the panel node, then put

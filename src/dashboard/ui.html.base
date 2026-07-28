@@ -69,7 +69,7 @@
     --on-accent:#07060B;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  html,body{height:100%}
+  html,body{height:100%;background:var(--void)}
   a{color:var(--synapse-ink);text-decoration:none}
   ::-webkit-scrollbar{width:9px;height:9px}
   ::-webkit-scrollbar-thumb{background:var(--edge2);border-radius:0}
@@ -454,8 +454,8 @@ try{ const savedLang = localStorage.getItem('callosium_lang'); if(savedLang) sta
 // that matters — WHERE to paste the always-on rules so the AI uses the brain
 // automatically every session (like a CLAUDE.md). Researched + fact-checked.
 const CALLOSIUM_AI_CLIENTS = [
-  { id:'claude-code', name:'Claude Code', fmt:'mcpServers', add:'Run  callosium serve  once, then add the MCP with the config below in ~/.claude.json (all projects) or ./.mcp.json (one project) — or via  claude mcp add.', rules:'CLAUDE.md', rulesWhere:'Save these rules in a CLAUDE.md file — ~/.claude/CLAUDE.md for every project, or ./CLAUDE.md in your brain folder. Claude Code loads it in full at the start of every session.' },
-  { id:'claude-desktop', name:'Claude Desktop', fmt:'mcpServers', add:'Settings → Developer → Edit Config (claude_desktop_config.json), paste the server under "mcpServers", then fully quit and reopen Claude Desktop.', rules:'Instructions for Claude', rulesWhere:'Settings → Profile → the "Instructions for Claude" box (applies to every chat). Or create a Project and fill its "Project instructions".' },
+  { id:'claude-code', name:'Claude Code', fmt:'mcpServers', stdioOnly:true, add:'Run  callosium serve  once, then add the MCP with the config below in ~/.claude.json (all projects) or ./.mcp.json (one project) — or via  claude mcp add.', rules:'CLAUDE.md', rulesWhere:'Save these rules in a CLAUDE.md file — ~/.claude/CLAUDE.md for every project, or ./CLAUDE.md in your brain folder. Claude Code loads it in full at the start of every session.' },
+  { id:'claude-desktop', name:'Claude Desktop', fmt:'mcpServers', stdioOnly:true, add:'Open Claude Desktop → Settings → Developer → Edit Config. That opens the real config file for you (claude_desktop_config.json), so you never have to hunt for it. If the file already has settings in it, add "mcpServers" as a new key at the TOP LEVEL (a sibling of the other keys, not nested inside them). If it is empty, paste the whole block below. Save, then FULLY quit Claude Desktop (tray or app menu → Quit; closing the window is not enough) and reopen. Callosium then appears in the tools list.', rules:'Instructions for Claude', rulesWhere:'Settings → Profile → the "Instructions for Claude" box (applies to every chat). Or create a Project and fill its "Project instructions".' },
   { id:'chatgpt', name:'ChatGPT', fmt:'url_only', add:'ChatGPT (desktop app AND web) connects only to a REMOTE MCP server over HTTPS — it cannot run a local stdio server, so a tunnel is always needed. Run  callosium mcp --http , expose it with a tunnel (ngrok / Cloudflare) to get an https URL, then in ChatGPT: Settings → Connectors (labeled "Apps" on newer builds) → Advanced → turn on Developer mode → Create custom connector → paste your MCP URL (ending /mcp) + token from the panel below. Turn the connector ON inside the chat before use; write actions ask approval each call. Needs a Plus/Pro/Business/Enterprise/Edu plan (not Free), and tool auto-calling is best-effort — you may have to say "check my Callosium brain".', rules:'Custom Instructions', rulesWhere:'ChatGPT has no per-project rules FILE. Paste the rules into Settings → Personalization → Custom Instructions (applies to every chat), or into a Project’s instructions.' },
   { id:'gemini', name:'Gemini CLI', fmt:'mcpServers', add:'Add the server under "mcpServers" in ~/.gemini/settings.json (all projects) or ./.gemini/settings.json (this project). Note: the Gemini web app cannot use a local MCP server — this is the Gemini CLI.', rules:'GEMINI.md', rulesWhere:'Put the rules in GEMINI.md — ~/.gemini/GEMINI.md (global) or ./GEMINI.md in your brain folder. Gemini CLI loads it at the start of every session.' },
   { id:'codex', name:'Codex CLI (OpenAI)', fmt:'codex_toml', add:'Codex connects over HTTP. First run  callosium serve  (the MCP endpoint auto-starts at http://127.0.0.1:4321/mcp). Then add the block below to ~/.codex/config.toml. IMPORTANT: Codex takes the token ONLY as an environment variable — bearer_token_env_var is the NAME of the variable, not the token. Set that variable (see the env-var box), then fully quit and reopen Codex from a new terminal so it reads it.', rules:'AGENTS.md', rulesWhere:'Put the rules in ~/.codex/AGENTS.md (global) or AGENTS.md in your project — Codex loads it every session.' },
@@ -572,9 +572,12 @@ function callosiumGuideHTML(spec){
     + '</div>'
     + '<div style="display:flex;align-items:center;gap:9px;margin:2px 2px 8px">'+callosiumGlyphBadge(c.id,26)+'<span style="font-family:var(--pixel);font-weight:600;font-size:15px;color:var(--starlight)">'+esc(c.name)+'</span></div>'
     + '<div style="'+lbl+'"><span style="color:var(--synapse-ink);font-weight:600">'+t('1 · add Callosium','1 · أضف كالوسيوم')+'</span> — '+esc(c.add)+'</div>'
-    // Connector-style path FIRST: a "custom MCP" form (Claude, ChatGPT, Kimi…)
-    // asks for a name + a Streamable-HTTP URL + a bearer token — exactly these.
-    + '<div style="'+lbl+'">'+t('If it shows a “custom MCP” form (Claude · ChatGPT · Kimi · Cursor…): pick <b>Streamable HTTP</b>, run  callosium mcp --http  in a terminal, then paste these three:','لو ظهر نموذج “MCP مخصص” (Claude · ChatGPT · Kimi · Cursor…): اختر <b>Streamable HTTP</b>، وشغّل  callosium mcp --http ، ثم الصق هذه الثلاثة:')+'</div>'
+    // Streamable-HTTP connector path — ONLY for clients that expose a URL+bearer
+    // connector (ChatGPT, Kimi, some others). Claude Desktop's "custom connector"
+    // dialog has no bearer-token field (OAuth only), so it can never reach a loopback
+    // bearer endpoint: stdioOnly clients skip this block and use the command config
+    // file below (which the server generates with a working node+script command).
+    + (c.stdioOnly ? '' : '<div style="'+lbl+'">'+t('If it shows a “custom MCP” form (ChatGPT · Kimi · Cursor…): pick <b>Streamable HTTP</b>, run  callosium mcp --http  in a terminal, then paste these three:','لو ظهر نموذج “MCP مخصص” (ChatGPT · Kimi · Cursor…): اختر <b>Streamable HTTP</b>، وشغّل  callosium mcp --http ، ثم الصق هذه الثلاثة:')+'</div>'
     + box('◍', t('name','الاسم'), 'name', 'Callosium')
     // If the endpoint that URL points at never bound, say so HERE — next to the box the user is
     // about to copy. Handing out a URL for a port nothing is listening on sends them to debug their
@@ -595,8 +598,10 @@ function callosiumGuideHTML(spec){
     // variable, not the token. Pasting the token there fails silently. Give the
     // exact set-it commands + the name to enter.
     + '<div style="'+lbl+';margin-top:2px">'+t('If that field is labelled bearer token <b>env var</b> (Codex, Kimi Code, and some others), it wants the <b>name</b> of an environment variable — not the token itself. Set the variable, then enter its name:','لو كان الحقل مكتوبًا عليه <b>متغيّر بيئة</b> لرمز الوصول (Codex و Kimi Code وغيرها)، فهو يطلب <b>اسم</b> متغيّر بيئة — لا الرمز نفسه. اضبط المتغيّر ثم أدخل اسمه:')+'</div>'
-    + box('⌗', t('set the token as an env var, then use its NAME','اضبط الرمز كمتغيّر بيئة ثم استخدم اسمه'), 'envtoken', 'Windows (PowerShell):\n  setx '+envName+' "'+ut.token+'"\n\nmacOS / Linux (add to ~/.zshrc or ~/.bashrc):\n  export '+envName+'="'+ut.token+'"\n\nThen put this NAME in the client’s "bearer token env var" field (NOT the token):\n  '+envName+'\n\nFully quit and reopen the client so it reads the variable.')
-    + '<div style="'+lbl+';margin-top:12px">'+t('Prefer a config file? Paste this where '+c.name+' keeps its MCP servers:','تفضّل ملف إعداد؟ الصق هذا حيث يحفظ '+c.name+' خوادم MCP:')+'</div>'
+    + box('⌗', t('set the token as an env var, then use its NAME','اضبط الرمز كمتغيّر بيئة ثم استخدم اسمه'), 'envtoken', 'Windows (PowerShell). Plain  setx  often does not take effect for apps launched from the tray, so use this instead:\n  [Environment]::SetEnvironmentVariable("'+envName+'", "'+ut.token+'", "User")\n\nmacOS / Linux (add to ~/.zshrc or ~/.bashrc):\n  export '+envName+'="'+ut.token+'"\n\nThen put this NAME in the client’s "bearer token env var" field (NOT the token):\n  '+envName+'\n\nAfter setting it, FULLY quit the client (tray or menu, then Quit) and reopen. If it still cannot see the variable, sign out of Windows and back in (or reboot) so every running process inherits the new environment.'))
+    + '<div style="'+lbl+';margin-top:12px">'+(c.stdioOnly
+        ? t('Paste this into '+c.name+'’s config file (the step above). This command IS the whole connection — no URL or token to manage:','الصق هذا في ملف إعداد '+c.name+' (الخطوة أعلاه). هذا الأمر هو الاتصال كله — لا رابط ولا رمز:')
+        : t('Prefer a config file? Paste this where '+c.name+' keeps its MCP servers:','تفضّل ملف إعداد؟ الصق هذا حيث يحفظ '+c.name+' خوادم MCP:'))+'</div>'
     + box('#', t('MCP config','إعداد MCP'), 'cfg', callosiumCfg(spec, c.fmt))
     // Rules step: EXPLICIT about pasting at the TOP, + a "let your AI do it" copy.
     + '<div style="'+lbl+';margin-top:14px"><span style="color:var(--synapse-ink);font-weight:600">'+t('2 · make it automatic','2 · اجعله تلقائيًا')+'</span> — '+t('paste Callosium’s rules at the <b>very top</b> of ','الصق قواعد كالوسيوم في <b>أعلى</b> ')+'<code style="font-family:var(--mono);color:var(--starlight)">'+esc(c.rules)+'</code>'+t(', above anything already there. ',' فوق أي شيء موجود. ')+esc(c.rulesWhere)+'</div>'
@@ -1409,10 +1414,13 @@ function renderIndexBanner(){
   // so a returning user with a broken index sees the actionable banner, not a silent
   // drop to keyword-only.
   const error = !building && (e.status==='error' || !!state.semanticError) && !state.embedBannerDismissed;
-  const show = building || error;
+  // a transient green "✓ ready" flip the moment a build finishes, so completion is
+  // visible instead of the banner just vanishing. startEmbedPoll sets/clears the flag.
+  const done = !building && !error && !!state.embedJustDone;
+  const show = building || error || done;
   let el = document.getElementById('calIndexBanner');
   if(!show){ if(el) el.remove(); __layoutBanners(); return; }
-  const mode = error ? 'error' : 'building';
+  const mode = error ? 'error' : done ? 'done' : 'building';
   // (Re)build the STRUCTURE only on first mount or an error<->building switch. Every
   // ~2.5s status poll then only updates the text + bar width, so the shimmer animation
   // runs UNINTERRUPTED (rebuilding it each poll would reset it and look stuttery).
@@ -1425,7 +1433,7 @@ function renderIndexBanner(){
     }
     el = document.createElement('div');
     el.id = 'calIndexBanner'; el.dataset.mode = mode;
-    el.style.cssText = 'position:fixed;left:0;right:0;z-index:99998;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:8px 16px;font-family:var(--mono,monospace);font-size:12.5px;color:var(--on-accent,#07060B);box-shadow:0 2px 12px rgba(0,0,0,.35);background:'+(error?'var(--danger,#FF3355)':'var(--synapse,#FF2E88)');
+    el.style.cssText = 'position:fixed;left:0;right:0;z-index:99998;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:8px 16px;font-family:var(--mono,monospace);font-size:12.5px;color:var(--on-accent,#07060B);box-shadow:0 2px 12px rgba(0,0,0,.35);background:'+(error?'var(--danger,#FF3355)':done?'var(--acid,#52F2B8)':'var(--synapse,#FF2E88)');
     const msgEl = document.createElement('span'); msgEl.id='calBannerMsg'; msgEl.style.fontWeight='500';
     el.appendChild(msgEl);
     if(error){
@@ -1434,7 +1442,7 @@ function renderIndexBanner(){
       x.style.cssText = 'background:transparent;border:none;color:var(--on-accent,#07060B);font-size:14px;line-height:1;cursor:pointer;padding:2px 6px;opacity:.85';
       x.onclick = ()=>{ state.embedBannerDismissed = true; renderIndexBanner(); };
       el.appendChild(x);
-    } else {
+    } else if(!done){
       // progress bar pinned to the banner's bottom edge: a real fill (done/total, or the
       // model-download %) PLUS a continuously sliding shimmer, so it ALWAYS looks alive —
       // even in the seconds between the batch-sized count jumps.
@@ -1452,6 +1460,8 @@ function renderIndexBanner(){
   const msg = document.getElementById('calBannerMsg');
   if(error){
     if(msg) msg.textContent = t('semantic search unavailable · keyword search works · re-index to retry','البحث الدلالي غير متاح · البحث بالكلمات يعمل · أعد الفهرسة');
+  } else if(done){
+    if(msg) msg.textContent = t('✓ smarter search is ready','✓ البحث الذكي جاهز');
   } else {
     let pct = null, txt;
     if(e.phase==='model' && e.modelPct!=null){
@@ -1489,7 +1499,9 @@ function startEmbedPoll(){
       // poll never sampled 'building' (small brain + warm model). A returning user with an
       // existing cache reports 'idle', not 'done', so this never fires spuriously.
       if(r.status==='done'){
+        state.embedJustDone = true; renderIndexBanner();          // flip to the green "✓ ready" state
         try{ await loadOverview(); if(state.screen==='overview' && $('#onboard').style.display==='none') render(); }catch(_){}
+        setTimeout(()=>{ state.embedJustDone = false; renderIndexBanner(); }, 4200); // then retire it
       }
     }
   }, 2500);

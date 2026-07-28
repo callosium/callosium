@@ -80,6 +80,7 @@ function map_teardown(){
   if(state.map_resizeT){ clearTimeout(state.map_resizeT); state.map_resizeT = null; }
   if(state.map_gestureT){ clearTimeout(state.map_gestureT); state.map_gestureT = null; }
   if(state.map_resize){ removeEventListener('resize', state.map_resize); state.map_resize = null; }
+  if(state.map_ro){ try{ state.map_ro.disconnect(); }catch(_){} state.map_ro = null; }
   if(state.map_winUp){ removeEventListener('mouseup', state.map_winUp); state.map_winUp = null; }
   if(state.map_vis){ document.removeEventListener('visibilitychange', state.map_vis); state.map_vis = null; }
   const cv = state.map_cv;
@@ -347,6 +348,29 @@ async function map_load(){
     }, 160);
   };
   addEventListener('resize', state.map_resize);
+
+  // Canvas-level ResizeObserver — NOT just window 'resize'. The map often mounts
+  // before the flex layout has given the canvas its final width (the side panel lays
+  // out a beat later), so map_sizeCanvas read a too-wide box and the initial fit framed
+  // for the wrong width — shoving the whole constellation to one side at ~50%. This
+  // re-sizes + re-fits the instant the real box settles, and leaves the camera alone
+  // once the user has grabbed it. Guarded so the no-op initial observe fire (box already
+  // the right size) never clears the canvas.
+  if(state.map_ro){ try{ state.map_ro.disconnect(); }catch(_){} state.map_ro = null; }
+  if(window.ResizeObserver){
+    state.map_ro = new ResizeObserver(() => {
+      if(state.screen !== 'map') return;
+      const c = document.getElementById('mapCanvas'); if(!c) return;
+      const dpr = state.map_dpr || 1;
+      const tw = Math.max(1, Math.round(c.offsetWidth * dpr)), th = Math.max(1, Math.round(c.offsetHeight * dpr));
+      if(c.width === tw && c.height === th) return;               // box unchanged — don't clear/redraw
+      map_sizeCanvas(c);
+      if(state.map_graph && !state.map_userCam) map_fitCamera(state.map_graph.bounds, c.width / (state.map_dpr || 1), c.height / (state.map_dpr || 1));
+      state.map_staticDirty = true;
+      map_afterCamera();
+    });
+    try{ state.map_ro.observe(cv); }catch(_){ state.map_ro = null; }
+  }
 
   // idle gate: freeze the loop while the tab is hidden, resume if work remains
   if(state.map_vis) document.removeEventListener('visibilitychange', state.map_vis);

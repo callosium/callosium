@@ -551,10 +551,12 @@ function callosiumGuideHTML(spec){
   // A per-CLIENT env-var name so connecting several AIs on one account never
   // collides (each config references its own variable). Used by the env-var box.
   const envName = 'CALLOSIUM_TOKEN_' + (c.id||'agent').toUpperCase().replace(/[^A-Z0-9]/g,'');
-  // client chip grid (brand glyph + name), selected highlighted
-  const chips = CALLOSIUM_AI_CLIENTS.map(x=>{ const on = x.id===c.id;
-    return '<button data-guide-client="'+x.id+'" style="display:flex;align-items:center;gap:8px;border:1px solid '+(on?'var(--synapse)':'var(--edge2)')+';background:'+(on?'rgba(255,46,136,.06)':'var(--surface)')+';border-radius:0;padding:7px 9px;cursor:pointer;text-align:left;transition:.12s">'
-      + callosiumGlyphBadge(x.id,24) + '<span style="font-family:var(--mono);font-size:11.5px;color:'+(on?'var(--starlight)':'var(--dust)')+';white-space:nowrap">'+esc(x.name)+'</span></button>';
+  // searchable dropdown items (brand glyph + name), the selected one highlighted.
+  // callosiumGuideWire filters these client-side as the user types, so a growing AI
+  // list stays easy to navigate instead of a wall of chips.
+  const ddItems = CALLOSIUM_AI_CLIENTS.map(x=>{ const on = x.id===c.id;
+    return '<button type="button" class="ai-dd-item" data-guide-client="'+x.id+'" data-ai-name="'+esc(x.name.toLowerCase())+'" style="display:flex;align-items:center;gap:9px;width:100%;box-sizing:border-box;border:0;border-bottom:1px solid var(--edge);background:'+(on?'rgba(255,46,136,.08)':'transparent')+';padding:9px 11px;cursor:pointer;text-align:left">'
+      + callosiumGlyphBadge(x.id,22) + '<span style="font-family:var(--mono);font-size:12.5px;color:'+(on?'var(--starlight)':'var(--dust)')+';white-space:nowrap">'+esc(x.name)+'</span>'+(on?'<span style="margin-left:auto;color:var(--synapse);font-size:12px">✓</span>':'')+'</button>';
   }).join('');
   const box = (num,label,copyKey,body) => '<div class="on-console" style="border:1px solid var(--edge2);border-radius:0;overflow:hidden;background:var(--console);text-align:left;margin-bottom:12px">'
     + '<div style="display:flex;align-items:center;padding:8px 12px;border-bottom:1px solid var(--edge);background:rgba(20,16,25,.55)"><span style="font-family:var(--pixel);font-weight:600;font-size:11px;color:var(--synapse);margin-right:8px">'+num+'</span><span style="font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--dust)">'+label+'</span>'
@@ -563,7 +565,11 @@ function callosiumGuideHTML(spec){
   const lbl = 'font-family:var(--mono);font-size:12.5px;color:var(--dust);line-height:1.6;margin:4px 2px 8px';
   return '<div>'
     + '<div style="font-family:var(--mono);font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:9px">'+t('which AI are you using?','أي ذكاء تستخدم؟')+'</div>'
-    + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:7px;max-height:190px;overflow:auto;margin-bottom:16px;padding:2px">'+chips+'</div>'
+    + '<div id="aiDd" style="position:relative;margin-bottom:16px">'
+    +   '<input id="aiSearch" autocomplete="off" spellcheck="false" aria-label="'+t('search for your AI','ابحث عن ذكائك')+'" placeholder="'+t('search for your AI…','ابحث عن ذكائك…')+'" value="'+esc(c.name)+'" style="width:100%;box-sizing:border-box;background:var(--void);border:1px solid var(--edge2);border-radius:0;padding:11px 34px 11px 12px;font-family:var(--mono);font-size:13px;color:var(--starlight);cursor:pointer;direction:ltr">'
+    +   '<span style="position:absolute;'+(state.lang==='ar'?'left':'right')+':12px;top:50%;transform:translateY(-50%);color:var(--faint);pointer-events:none;font-size:11px">▾</span>'
+    +   '<div id="aiDdList" role="listbox" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:40;max-height:250px;overflow:auto;border:1px solid var(--synapse);background:var(--surface);box-shadow:0 10px 28px rgba(0,0,0,.55)">'+ddItems+'</div>'
+    + '</div>'
     + '<div style="display:flex;align-items:center;gap:9px;margin:2px 2px 8px">'+callosiumGlyphBadge(c.id,26)+'<span style="font-family:var(--pixel);font-weight:600;font-size:15px;color:var(--starlight)">'+esc(c.name)+'</span></div>'
     + '<div style="'+lbl+'"><span style="color:var(--synapse-ink);font-weight:600">'+t('1 · add Callosium','1 · أضف كالوسيوم')+'</span> — '+esc(c.add)+'</div>'
     // Connector-style path FIRST: a "custom MCP" form (Claude, ChatGPT, Kimi…)
@@ -601,7 +607,25 @@ function callosiumGuideHTML(spec){
 }
 function callosiumCopy(btn, text){ if(!text) return; const ok=()=>{ btn.textContent='✓'; }; if(navigator.clipboard){ navigator.clipboard.writeText(text).then(ok).catch(()=>{ try{ const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); ok(); }catch(_){} }); } }
 function callosiumGuideWire(root, spec, rerender){
-  root.querySelectorAll('[data-guide-client]').forEach(b=> b.onclick=()=>{ state.ai_guide_client = b.dataset.guideClient; if(rerender) rerender(); });
+  // Searchable AI dropdown: filter items client-side as the user types (no rerender,
+  // so focus is kept), rerender ONLY on selection (which swaps the config below).
+  (function(){
+    const dd = root.querySelector('#aiDd'); if(!dd) return;
+    const inp = root.querySelector('#aiSearch'); const list = root.querySelector('#aiDdList');
+    if(!inp || !list) return;
+    const items = [].slice.call(list.querySelectorAll('.ai-dd-item'));
+    const filter = q=>{ q=(q||'').trim().toLowerCase(); items.forEach(it=>{ it.style.display = (!q || (it.dataset.aiName||'').indexOf(q)>=0) ? 'flex':'none'; }); };
+    const openDd = ()=>{ list.style.display='block'; };
+    const closeDd = ()=>{ list.style.display='none'; };
+    inp.addEventListener('focus', ()=>{ try{ inp.select(); }catch(_){} filter(''); openDd(); });
+    inp.addEventListener('input', ()=>{ openDd(); filter(inp.value); });
+    inp.addEventListener('blur', ()=>{ setTimeout(closeDd, 160); }); // let an item click land first
+    inp.addEventListener('keydown', e=>{
+      if(e.key==='Escape'){ closeDd(); inp.blur(); }
+      else if(e.key==='Enter'){ const f=items.find(it=>it.style.display!=='none'); if(f){ e.preventDefault(); f.click(); } }
+    });
+    items.forEach(b=> b.onclick=e=>{ e.stopPropagation(); state.ai_guide_client = b.dataset.guideClient; closeDd(); if(rerender) rerender(); });
+  })();
   root.querySelectorAll('[data-guide-copy]').forEach(b=> b.onclick=()=>{
     const c = CALLOSIUM_AI_CLIENTS.find(x=>x.id===(state.ai_guide_client||'claude-code')) || CALLOSIUM_AI_CLIENTS[0];
     const ut = callosiumUrlToken(spec);

@@ -468,7 +468,12 @@ function ob_connectHTML(){
     + '<div style="width:48px;height:48px;border:1px solid var(--acid);border-radius:0;display:flex;align-items:center;justify-content:center;margin:0 auto 16px;color:var(--acid);font-size:20px;background:rgba(82,242,184,.08)">✓</div>'
     + '<h1 style="font-family:var(--pixel);font-weight:700;font-size:28px;margin-bottom:8px">'+head+'</h1>'
     + '<p style="color:var(--dust);font-size:14px;line-height:1.6;margin-bottom:22px">'+sub+'</p>'
-    + '<div style="text-align:left">' + callosiumGuideHTML(spec) + kickBox + '</div>'
+    + '<div style="text-align:left">'
+    + '<div style="margin-bottom:16px">'
+    +   '<div style="font-family:var(--mono);font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:9px">'+t('name this connection','سمِّ هذا الاتصال')+'</div>'
+    +   '<input id="obAgentName" autocomplete="off" spellcheck="false" maxlength="64" placeholder="'+t('e.g. My Claude, Work Assistant…','مثال: كلود، مساعد العمل…')+'" value="'+esc(state.ob_agentName||'')+'" style="width:100%;box-sizing:border-box;background:var(--void);border:1px solid var(--edge2);border-radius:0;padding:11px 12px;font-family:var(--mono);font-size:13px;color:var(--starlight)">'
+    + '</div>'
+    + callosiumGuideHTML(spec) + kickBox + '</div>'
     + '<button data-ob="enter" style="margin-top:6px;font-family:var(--pixel);font-weight:600;font-size:13px;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--edge2);color:var(--dust);background:transparent;padding:12px 24px;border-radius:0;cursor:pointer">'+t('explore the cockpit →','ادخل لوحة القيادة →')+'</button>'
     + '<div style="font-family:var(--mono);font-size:11px;color:var(--faint);margin-top:14px">'+t('you can find this guide again any time under Agents → connect an AI.','يمكنك إيجاد هذا الدليل لاحقًا في الوكلاء ← وصّل ذكاءً.')+'</div>'
     + '</div></div>';
@@ -661,7 +666,8 @@ async function ob_doInit(){
 async function ob_doPair(){
   if(state.ob_pairing) return; // auto-triggered on the connect view — don't double-mint
   state.ob_pairing = true;
-  try{ const r = await post('/api/pair', { id:'my-assistant', displayName:'My Assistant' }); if(r.error){ state.ob_err=r.error; } else { state.ob_pairConfig = r.config; } }
+  const nm = (state.ob_agentName||'').trim() || 'My Assistant'; // user-named, else a sensible default
+  try{ const r = await post('/api/pair', { id:'my-assistant', displayName:nm }); if(r.error){ state.ob_err=r.error; } else { state.ob_pairConfig = r.config; } }
   catch(e){ state.ob_err='couldn’t create the connection.'; }
   state.ob_pairing = false;
   renderOnboard(state.onboardPhase);
@@ -705,5 +711,11 @@ function ob_wire(){
   const doCopy = (btn, text)=>{ if(!text) return; const ok=()=>{ btn.textContent='✓'; }; if(navigator.clipboard){ navigator.clipboard.writeText(text).then(ok).catch(()=>{ try{ const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); ok(); }catch(_){} }); } };
   const copyPrompt = el.querySelector('[data-ob-copyprompt]'); if(copyPrompt) copyPrompt.onclick=()=> doCopy(copyPrompt, ob_kickoffPrompt(state.ob_setupMode||'raw'));
   // the shared per-AI setup guide (client picker + MCP config + rules copy)
+  // name-this-connection: keep the typed value in state (no rerender, keeps focus);
+  // on blur, rename the auto-paired agent so it shows up under the user's own name.
+  { const an = el.querySelector('#obAgentName'); if(an){
+      an.addEventListener('input', ()=>{ state.ob_agentName = an.value; });
+      an.addEventListener('blur', ()=>{ const nm=(an.value||'').trim(); if(nm && state.ob_pairConfig){ post('/api/rename', { id:'my-assistant', displayName:nm }).catch(()=>{}); } });
+  } }
   if(el.querySelector('[data-guide-client]') && window.callosiumGuideWire) callosiumGuideWire(el, ob_serverSpec(), ()=>renderOnboard(state.onboardPhase));
 }

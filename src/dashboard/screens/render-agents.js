@@ -387,10 +387,16 @@ function agentsLinkModal(){
         <div style="padding:22px">
           <div style="font-family:var(--pixel);font-weight:600;font-size:19px;margin-bottom:6px">which AI are we connecting?</div>
           <div style="font-size:13px;color:var(--dust);margin-bottom:18px">search the list and pick one — or choose "something else" to name any AI. Callosium hands it a scoped connection you paste into its settings; no keys leave this device.</div>
-          <div id="agAiDd" style="position:relative">
-            <input id="agAiSearch" autocomplete="off" spellcheck="false" placeholder="search for your AI…" aria-label="search for your AI" data-autofocus style="width:100%;box-sizing:border-box;background:var(--void);border:1px solid var(--edge2);border-radius:0;padding:11px 34px 11px 12px;font-family:var(--mono);font-size:13px;color:var(--starlight);cursor:pointer">
-            <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--faint);pointer-events:none;font-size:11px">▾</span>
-            <div id="agAiDdList" role="listbox" style="display:none;position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:40;max-height:260px;overflow:auto;border:1px solid var(--synapse);background:var(--surface);box-shadow:0 10px 28px rgba(0,0,0,.55)">${items}</div>
+          <div id="agAiDd">
+            <div style="position:relative">
+              <input id="agAiSearch" autocomplete="off" spellcheck="false" placeholder="search for your AI…" aria-label="search for your AI" data-autofocus style="width:100%;box-sizing:border-box;background:var(--void);border:1px solid var(--edge2);border-radius:0;padding:11px 34px 11px 12px;font-family:var(--mono);font-size:13px;color:var(--starlight);cursor:pointer">
+              <span style="position:absolute;right:12px;top:50%;transform:translateY(-50%);color:var(--faint);pointer-events:none;font-size:11px">▾</span>
+            </div>
+            <!-- In-FLOW list, not an absolute float: the modal card is max-height:88vh; overflow:auto,
+                 so an absolutely-positioned menu doesn't add to its height and gets cropped right below
+                 the input (only ~1 row showed). In flow, the card grows to include the list (and scrolls
+                 the whole modal past 88vh), and the list scrolls internally at max-height. -->
+            <div id="agAiDdList" role="listbox" style="display:none;margin-top:8px;max-height:320px;overflow-y:auto;border:1px solid var(--edge2);border-radius:0;background:var(--void)">${items}</div>
           </div>
           ${err}
           <div style="font-family:var(--mono);font-size:10.5px;color:var(--faint);margin-top:16px;text-align:center">every link stays on this device · nothing is sent anywhere</div>

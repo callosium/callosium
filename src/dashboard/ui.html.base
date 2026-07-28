@@ -613,6 +613,12 @@ function callosiumGuideHTML(spec){
     + box('↥', t('rules — paste at the TOP of ','القواعد — الصقها في أعلى ')+esc(c.rules), 'rules', callosiumRules())
     + '<div style="'+lbl+';margin-top:6px">'+t('Rather not open the file? Copy this and paste it into '+c.name+' — it will add the rules for you:','لا تريد فتح الملف؟ انسخ هذا والصقه في '+c.name+' — سيضيف القواعد بنفسه:')+'</div>'
     + box('✎', t('let your AI add the rules','دع الذكاء يضيف القواعد'), 'ruleswrap', callosiumRulesWrapper(c.rules))
+    // The #1 reason a fresh, correct setup still shows "bad token" / "not connected":
+    // a program reads its config + environment only when it STARTS. Setting the token
+    // (env var) or editing the config does nothing for an already-running client. This
+    // is a footnote inside the env-var box above — but people miss it there, so it also
+    // gets its own loud, final step for EVERY client.
+    + '<div style="'+lbl+';margin-top:16px;border:1px solid var(--amber);border-left:3px solid var(--amber);padding:11px 13px;color:var(--starlight)"><span style="color:var(--amber);font-weight:600">'+t('3 · restart '+c.name,'3 · أعد تشغيل '+c.name)+'</span> — '+t('the step people miss: <b>fully quit '+c.name+'</b> (close it from the tray or menu — not just the window) and open it again. It only reads this connection, and the token, when it starts — so a fresh, correct setup still shows “not connected” or “bad token” until you do. On Windows, if it still can’t see the token after reopening, sign out and back in (or reboot) so it inherits the new environment.','الخطوة التي يفوّتها الجميع: <b>أغلق '+c.name+' تمامًا</b> (من شريط المهام أو القائمة — لا مجرد النافذة) ثم افتحه من جديد. لا يقرأ هذا الاتصال ولا الرمز إلا عند بدء التشغيل — لذا يظل الإعداد الصحيح يظهر “غير متصل” أو “رمز غير صحيح” حتى تفعل ذلك. على ويندوز، إن ظل لا يرى الرمز بعد إعادة الفتح، فسجّل الخروج والدخول (أو أعد التشغيل) ليرث البيئة الجديدة.')+'</div>'
     + '</div>';
 }
 function callosiumCopy(btn, text){ if(!text) return; const ok=()=>{ btn.textContent='✓'; }; if(navigator.clipboard){ navigator.clipboard.writeText(text).then(ok).catch(()=>{ try{ const ta=document.createElement('textarea'); ta.value=text; ta.style.position='fixed'; ta.style.opacity='0'; document.body.appendChild(ta); ta.focus(); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); ok(); }catch(_){} }); } }

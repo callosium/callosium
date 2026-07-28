@@ -689,17 +689,55 @@ function handlePickFolder(res: http.ServerResponse): void {
   let cmd: string;
   let args: string[];
   if (process.platform === 'win32') {
-    // Passed as -EncodedCommand (base64 UTF-16LE) to sidestep all quoting. A TopMost
-    // owner form pulls the dialog to the foreground; windowsHide hides the PS console.
-    const ps =
-      "$ProgressPreference = 'SilentlyContinue';" + // no 'preparing modules' record leaking to output
-      'Add-Type -AssemblyName System.Windows.Forms;' +
-      '$d = New-Object System.Windows.Forms.FolderBrowserDialog;' +
-      "$d.Description = 'Select your notes folder for Callosium';" +
-      '$d.ShowNewFolderButton = $true;' +
-      '$t = New-Object System.Windows.Forms.Form; $t.TopMost = $true; $t.ShowInTaskbar = $false;' +
-      '$r = $d.ShowDialog($t); $t.Dispose();' +
-      "if ($r -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($d.SelectedPath) }";
+    // Passed as -EncodedCommand (base64 UTF-16LE) to sidestep all quoting; windowsHide
+    // hides the PS console. The dialog must come to the FOREGROUND: the browser owns
+    // the foreground when the button is clicked, and Windows' foreground lock otherwise
+    // buries the dialog behind it. A shown (off-screen) owner window plus AttachThreadInput
+    // + SetForegroundWindow steals foreground so the dialog actually appears on top.
+    const ps = [
+      "$ProgressPreference='SilentlyContinue'",
+      'Add-Type -AssemblyName System.Windows.Forms',
+      'Add-Type -AssemblyName System.Drawing',
+      'Add-Type -TypeDefinition @"',
+      'using System;',
+      'using System.Runtime.InteropServices;',
+      'public static class Fg {',
+      '  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();',
+      '  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr p);',
+      '  [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();',
+      '  [DllImport("user32.dll")] static extern bool AttachThreadInput(uint a, uint b, bool f);',
+      '  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);',
+      '  [DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);',
+      '  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int n);',
+      '  [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);',
+      '  static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);',
+      '  public static void Force(IntPtr h) {',
+      '    uint fg = GetWindowThreadProcessId(GetForegroundWindow(), IntPtr.Zero);',
+      '    uint cur = GetCurrentThreadId();',
+      '    AttachThreadInput(fg, cur, true);',
+      '    SetWindowPos(h, HWND_TOPMOST, 0,0,0,0, 0x0001|0x0002|0x0040);',
+      '    ShowWindow(h, 5); BringWindowToTop(h); SetForegroundWindow(h);',
+      '    AttachThreadInput(fg, cur, false);',
+      '  }',
+      '}',
+      '"@',
+      '$t = New-Object System.Windows.Forms.Form',
+      '$t.TopMost = $true; $t.ShowInTaskbar = $false',
+      '$t.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None',
+      '$t.Size = New-Object System.Drawing.Size(1,1)',
+      '$t.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual',
+      '$t.Location = New-Object System.Drawing.Point(-3000,-3000)',
+      '$t.Opacity = 0',
+      '$t.Show(); $t.Activate()',
+      '[Fg]::Force($t.Handle)',
+      '[System.Windows.Forms.Application]::DoEvents()',
+      '$d = New-Object System.Windows.Forms.FolderBrowserDialog',
+      "$d.Description = 'Select your notes folder for Callosium'",
+      '$d.ShowNewFolderButton = $true',
+      '$r = $d.ShowDialog($t)',
+      '$t.Dispose()',
+      "if ($r -eq [System.Windows.Forms.DialogResult]::OK) { [Console]::Out.Write($d.SelectedPath) }",
+    ].join('\n');
     cmd = 'powershell';
     args = ['-NoProfile', '-STA', '-EncodedCommand', Buffer.from(ps, 'utf16le').toString('base64')];
   } else if (process.platform === 'darwin') {

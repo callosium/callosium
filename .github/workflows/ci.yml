@@ -93,7 +93,14 @@ jobs:
           mkdir consumer && cd consumer
           npm init -y > /dev/null
           start=$(date +%s)
-          npm install "$(ls ../callosium-*.tgz)"
+          # onnxruntime-node's postinstall fetches GPU provider blobs from nuget.org on
+          # linux/x64; nuget has transient outages (an ETIMEDOUT there once reddened this
+          # job on an unrelated commit). Retry a few times so a network blip doesn't fail
+          # the build -- a genuinely broken postinstall still fails all attempts.
+          n=0; until npm install "$(ls ../callosium-*.tgz)"; do
+            n=$((n+1)); [ "$n" -ge 3 ] && { echo "install failed after $n attempts"; exit 1; }
+            echo "install attempt $n failed (likely a transient nuget.org outage) -- retrying in 15s"; sleep 15
+          done
           echo "install took $(( $(date +%s) - start ))s"
           du -sh node_modules 2>/dev/null || true
       - name: run as a user would

@@ -106,6 +106,8 @@ function renderSettings(){
   const v = o.vitals || {};
   const brainName = state.st_name != null ? state.st_name : (o.brainName || t('your brain','دماغك'));
   const brainPath = o.brainPath || '~';
+  const switching = !!state.st_switching;
+  const switchErr = state.st_switchErr ? `<div style="font-family:var(--mono);font-size:11px;color:var(--danger);padding:0 18px 12px;line-height:1.6">${esc(state.st_switchErr)}</div>` : '';
   const notes = (v.notes||0);
   const meaning = (v.meaningPoints||0);
   const nfmt = n => (n||0).toLocaleString('en-US');
@@ -226,9 +228,12 @@ function renderSettings(){
         </div>
         <div class="st-row" style="${rowTop}">
           <div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--starlight)">${L('location on disk','الموقع على القرص')}</div><div style="font-family:var(--mono);font-size:12px;color:var(--dust);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" dir="ltr">${esc(brainPath)}</div></div>
-          <button id="stOpenFolder"${opening?' disabled':''} style="${st_btnStyle()};opacity:${opening?'.6':'1'};cursor:${opening?'default':'pointer'}" ${opening?'':`onmouseenter="this.style.borderColor='var(--synapse)';this.style.color='var(--synapse)'" onmouseleave="this.style.borderColor='var(--edge2)';this.style.color='var(--dust)'"`}>${esc(openLabel)}</button>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+            <button id="stSwitchBrain"${switching?' disabled':''} title="${L('connect a different notes folder as your brain','وصّل مجلّد ملاحظات آخر كدماغك')}" style="font-family:var(--mono);font-size:11px;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--synapse);color:var(--synapse-ink);background:transparent;padding:8px 14px;border-radius:0;cursor:${switching?'default':'pointer'};opacity:${switching?'.6':'1'}" ${switching?'':`onmouseenter="this.style.background='var(--synapse)';this.style.color='var(--on-accent)'" onmouseleave="this.style.background='transparent';this.style.color='var(--synapse-ink)'"`}>${switching?L('switching…','...جارٍ التبديل'):L('switch','تبديل')}</button>
+            <button id="stOpenFolder"${opening?' disabled':''} style="${st_btnStyle()};opacity:${opening?'.6':'1'};cursor:${opening?'default':'pointer'}" ${opening?'':`onmouseenter="this.style.borderColor='var(--synapse)';this.style.color='var(--synapse)'" onmouseleave="this.style.borderColor='var(--edge2)';this.style.color='var(--dust)'"`}>${esc(openLabel)}</button>
+          </div>
         </div>
-        ${openErr}
+        ${openErr}${switchErr}
         <div class="st-row" style="${rowTop}">
           <div style="flex:1;min-width:0"><div style="font-size:14px;color:var(--starlight)">${L('storage','التخزين')}</div><div style="font-size:13.5px;color:var(--dust);margin-top:3px">${meaning?esc(nfmt(meaning))+' '+L('meaning points · on this device','نقطة معنى · على هذا الجهاز'):L('on this device','على هذا الجهاز')}</div></div>
           <span style="font-family:var(--grot);font-weight:700;font-size:15px;color:var(--starlight);flex-shrink:0">${esc(nfmt(notes))} ${L('notes','ملاحظة')}</span>
@@ -366,6 +371,7 @@ function st_wire(){
 
   // open folder — real POST /api/open-folder (opens the brain in the OS file explorer)
   const of = $('#stOpenFolder'); if(of) of.addEventListener('click', st_openFolder);
+  const sw = $('#stSwitchBrain'); if(sw) sw.addEventListener('click', st_switchBrain);
 
   // export — real download of the .zip. The old hidden-iframe form POST had no
   // reliable "download started" signal (the iframe 'load' never fires for an
@@ -485,6 +491,24 @@ function st_reindex(full){
   });
 }
 
+// ── switch brain: pop the native folder picker, then ingest the chosen folder. The
+// server's handleIngest calls setBrain(), which switches the LIVE brain (resets caches,
+// remembers it in config) and rebuilds embeddings in the background. Reload on 'done'
+// so the whole app re-boots on the new brain. ──
+async function st_switchBrain(){
+  if(state.st_switching) return;
+  state.st_switchErr = null;
+  let r; try{ r = await post('/api/pick-folder', {}); }catch(_){ state.st_switchErr = t("couldn't open the folder picker.",'تعذّر فتح منتقي المجلدات.'); if(state.screen==='settings') render(); return; }
+  if(r && (r.httpStatus || r.error)){ state.st_switchErr = (r && r.error) || t("couldn't open the folder picker.",'تعذّر فتح منتقي المجلدات.'); if(state.screen==='settings') render(); return; }
+  if(!r || r.cancelled || !r.path) return; // user closed the dialog — nothing changes
+  state.st_switching = true; state.st_switchErr = null; if(state.screen==='settings') render();
+  let settled = false, es;
+  try{ es = new EventSource(CCT_Q('/api/ingest?path='+encodeURIComponent(r.path))); }
+  catch(_){ state.st_switching=false; state.st_switchErr=t("couldn't start the import.",'تعذّر بدء الاستيراد.'); if(state.screen==='settings') render(); return; }
+  es.addEventListener('done', ()=>{ if(settled) return; settled=true; try{ es.close(); }catch(_){} location.reload(); });
+  es.addEventListener('error', ()=>{ if(settled) return; settled=true; try{ es.close(); }catch(_){}
+    state.st_switching=false; state.st_switchErr=t("couldn't read that folder as a brain — pick the folder your notes actually live in.",'تعذّر قراءة ذلك المجلد كدماغ — اختر المجلد الذي توجد فيه ملاحظاتك.'); if(state.screen==='settings') render(); });
+}
 // ── real open-folder (POST /api/open-folder → opens the OS file explorer) ──
 async function st_openFolder(){
   if(state.st_openingFolder) return;

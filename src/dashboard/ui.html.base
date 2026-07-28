@@ -199,7 +199,7 @@
 <body>
 <a href="#screen" id="skipLink" style="position:absolute;left:-9999px;top:8px;z-index:100;font-family:var(--mono);font-size:12px;background:var(--surface);color:var(--starlight);border:1px solid var(--synapse);padding:8px 14px" onfocus="this.style.left='8px'" onblur="this.style.left='-9999px'">skip to main content</a>
 <div id="srLive" role="status" aria-live="polite" aria-atomic="true" style="position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0"></div>
-<div id="app" data-theme="dark" style="position:relative;height:100vh;width:100%;background:var(--void);color:var(--starlight);font-family:var(--sans);overflow:hidden;line-height:1.5">
+<div id="app" data-theme="dark" style="position:fixed;inset:0;background:var(--void);color:var(--starlight);font-family:var(--sans);overflow:hidden;line-height:1.5">
 <script>/* apply the persisted theme before first paint (no flash of the wrong theme) */
 try{var __bt=localStorage.getItem('callosium_theme');if(__bt==='light'||__bt==='dark')document.getElementById('app').setAttribute('data-theme',__bt);}catch(e){}</script>
 
@@ -1423,7 +1423,10 @@ function __layoutBanners(){
   let top = 0;
   if(up){ up.style.top = top+'px'; top += up.offsetHeight; }
   if(ix){ ix.style.top = top+'px'; top += ix.offsetHeight; }
-  if(app){ if(top>0){ app.style.marginTop = top+'px'; app.style.height = 'calc(100vh - '+top+'px)'; } else { app.style.marginTop=''; app.style.height=''; } }
+  // #app is position:fixed;inset:0 (fills the visible viewport reliably, unlike 100vh/dvh
+  // which misresolve in some webviews). Push its TOP down by the banner stack; bottom:0
+  // keeps it pinned to the window bottom, so it always fills exactly with no dead band.
+  if(app){ app.style.top = top>0 ? top+'px' : ''; app.style.marginTop=''; app.style.height=''; }
 }
 // Persistent "building smarter search" indicator. Lives on <body> like the update
 // banner, so it survives screen re-renders (indexing continues while the user

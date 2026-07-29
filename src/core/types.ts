@@ -185,6 +185,7 @@ export type FindingKind =
   | 'orphan-note'
   | 'moc-gap'
   | 'hub-gap'
+  | 'area-moc-gap'
   | 'dated-note-drift'
   | 'duplicate-alias'
   | 'sync-conflict-copy';

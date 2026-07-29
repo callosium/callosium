@@ -79,6 +79,22 @@ export function isHub(f: string, text: string): boolean {
   return (fmType(text) || '').toLowerCase() === 'moc' || b === 'home' || b === 'overview' || b.endsWith(' index') || b === 'index' || b.endsWith(' moc');
 }
 
+/** Is this hub the AREA map for `folderName` — a map named after the folder itself
+ *  ("Initiatives MOC"/"Initiatives Home"/"Initiatives Index" for Initiatives/) — as
+ *  opposed to a SUB-topic map that merely happens to sit in the same folder
+ *  ("LinkedIn Brand MOC")? Every area has ONE area map + any number of sub-maps;
+ *  the two are indistinguishable to isHub, which is why a new venture used to get
+ *  parented to whichever sub-map sorted first. hubForNote prefers the area map, and
+ *  brain_check uses this to spot an area that has sub-maps but no area map. Tolerant
+ *  of a trailing generic hub word (MOC/Home/Index/Hub) and a plural 's' on either
+ *  side ("Log Index" governs "Logs/"; "Memory Hub" governs "Memory/"). */
+export function isAreaMoc(hubBasename: string, folderName: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+  const core = norm(hubBasename).replace(/\s+(moc|home|index|hub)$/, '').trim().replace(/s$/, '');
+  const f = norm(folderName).replace(/s$/, '');
+  return core !== '' && core === f;
+}
+
 /** The hub/MOC note that governs a note's topic — the NEAREST hub sharing its
  *  folder path, walking from the note's own folder up to the top partition. Lets
  *  write_note nudge the AI to wire a fresh note into its map-of-content (the AI
@@ -90,6 +106,8 @@ export function hubForNote(notePath: string, texts: VaultTexts, canSee?: (p: str
   const seg = notePath.split('/');
   for (let depth = seg.length - 1; depth >= 1; depth--) {
     const prefix = seg.slice(0, depth).join('/') + '/';
+    const folderName = seg[depth - 1];
+    const hubsHere: string[] = [];
     for (const f of texts.files) {
       if (f === notePath || !f.startsWith(prefix)) continue;
       // The hub must sit DIRECTLY in this ancestor folder — not in a deeper
@@ -99,7 +117,16 @@ export function hubForNote(notePath: string, texts: VaultTexts, canSee?: (p: str
       // Never point a scoped agent at a hub it cannot read (matches suggestLinks
       // + get_map, which are both scope-filtered); owner passes no filter.
       if (canSee && !canSee(f)) continue;
-      if (isHub(f, texts.texts.get(f) || '')) return baseName(f);
+      if (isHub(f, texts.texts.get(f) || '')) hubsHere.push(f);
+    }
+    if (hubsHere.length) {
+      // Prefer this folder's OWN area map over an arbitrary sibling sub-map. Without
+      // this, a note in a partition holding several peer hubs (a LinkedIn sub-MOC, a
+      // Callosium hub, …) got nudged toward whichever sorted first, so a fresh venture
+      // was parented under an unrelated topic. Falls back to the first hub when no area
+      // map exists — brains without one behave exactly as before.
+      const area = hubsHere.find((f) => isAreaMoc(baseName(f), folderName));
+      return baseName(area ?? hubsHere[0]);
     }
   }
   return null;
@@ -440,6 +467,7 @@ export function generateFilingRules(schema: BrainSchema, canSee?: (partitionPath
     `2. Link that hub FROM the parent folder's hub, and link back to the parent from it.`,
     `3. Write the folder's filing rule INSIDE that hub — one line on what belongs there — so the next AI files correctly without guessing.`,
     `A folder holding notes but no hub is invisible to navigation, and brain_check flags it. Don't create a subfolder for a single note; create one when at least two notes share a durable category.`,
+    `Each top-level AREA (partition) should also have ONE area map named "<Area> MOC" sitting at its root — it lists the area's sub-hubs + anchors and is the parent every sub-map links up to. Without it, a new note gets parented to an arbitrary sibling sub-map; brain_check flags an area that has sub-maps but no area map. If an area you're filing into has none, create it (\`type: moc\`) and link it into [[Home]] before you finish.`,
     ``,
     `## Linking`,
     `Use [[wikilinks]]; link generously so every note is reachable from a hub; add aliases to frequently-referenced notes; verify each link target resolves before saving. Call glossary for known entities + aliases.`,

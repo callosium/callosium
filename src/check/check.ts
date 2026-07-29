@@ -5,10 +5,10 @@
 
 import { Vault } from '../core/vault.ts';
 import { parseNote } from '../core/frontmatter.ts';
-import { loadSchema, SCHEMA_IN_BRAIN } from '../core/schema.ts';
+import { loadSchema, SCHEMA_IN_BRAIN, partitionPaths } from '../core/schema.ts';
 import { validateNote, isConformanceExempt } from '../filing/engine.ts';
 import { buildGraph, type BuildResult } from '../graph/index.ts';
-import { isHub } from '../structure/map.ts';
+import { isHub, isAreaMoc } from '../structure/map.ts';
 import type { VaultTexts } from '../recall/engine.ts';
 import type { Finding, Note } from '../core/types.ts';
 
@@ -292,7 +292,12 @@ export async function brainCheck(vault: Vault, shared?: { texts?: VaultTexts; bu
     // NAME isn't moc-ish) and the original name pattern — so this only ever grows
     // the leaf set, never newly flags a note as an orphan that wasn't before.
     const isLeaf = hubPaths.has(f) || /(^|[^a-z])(index|moc)([^a-z]|$)/.test(stem) || stem === 'home' ||
-      f.startsWith('Templates/') || f.startsWith('Inbox/') || inVerbatim(f);
+      f.startsWith('Templates/') || f.startsWith('Inbox/') || inVerbatim(f) ||
+      // Reference/Skills/ is a bundle store: a skill = SKILL.md + reference/ files,
+      // read as a unit, not interlinked knowledge notes. It's already exempt from
+      // the hub-gap/moc-gap passes (skipStructural); exempt it from orphans too so a
+      // skill's own reference files aren't each flagged as unreachable.
+      /(^|\/)Reference\/Skills\//.test(f);
     if (!connected.has(f) && !isLeaf) {
       orphanPaths.add(f);
       findings.push({ kind: 'orphan-note', path: f, detail: 'no links in or out — unreachable from any note' });
@@ -399,7 +404,11 @@ export async function brainCheck(vault: Vault, shared?: { texts?: VaultTexts; bu
     outHubOf.set(e.from, e.to);
   }
   for (const f of files) {
-    if (skipStructural(f) || f.startsWith('Inbox/') || hubPaths.has(f) || orphanPaths.has(f)) continue;
+    // Memory/ is episodic: a dated record legitimately NAMES a MOC in prose ("linked
+    // it from [[LinkedIn Brand MOC]]") without being a member of that topic map, and
+    // it must never be added to one. Exempt it here like Reference/Skills is in
+    // skipStructural — otherwise every such mention is nagged as reaching-not-reachable.
+    if (skipStructural(f) || f.startsWith('Inbox/') || f.startsWith('Memory/') || hubPaths.has(f) || orphanPaths.has(f)) continue;
     if (folderHub.has(folderOf(f) + '/')) continue;                     // same-folder hub → moc-gap (4b) owns it
     if ([...(backlinks.get(f) ?? [])].some((src) => hubPaths.has(src))) continue; // a hub already links it → wired
     const outHub = outHubOf.get(f);
@@ -410,6 +419,45 @@ export async function brainCheck(vault: Vault, shared?: { texts?: VaultTexts; bu
       target: outHub,
       detail: `links to a map-of-content ([[${outHub.split('/').pop()!.replace(/\.md$/, '')}]]) but that map doesn't link back — add [[${f.split('/').pop()!.replace(/\.md$/, '')}]] to it so the note is reachable, not only reaching`,
     });
+  }
+
+  // 4e. area-moc-gap: a whole PARTITION has real sub-structure — 2+ mapped
+  //     sub-topics (direct child folders that each carry their own hub) — but no
+  //     AREA MAP tying them together: no root-level hub that names the partition,
+  //     is a generic Overview/Home/Index, or links a majority of the sub-hubs. This
+  //     is what an iterated/adopted brain accumulates — sub-MOCs grow, but the area
+  //     itself never gets a top map — and it's exactly what makes hubForNote parent
+  //     a fresh note to an arbitrary sibling sub-MOC (the LinkedIn-Brand-MOC misfire
+  //     the 4c comment describes). ONE advisory finding per partition, only for an
+  //     area with genuine sub-structure and no map, so it stays actionable rather
+  //     than crying wolf like the hub-to-hub check the audit deliberately drops.
+  for (const P of partitionPaths(schema)) {
+    if (P === 'Templates' || P === 'Inbox' || P === 'System') continue;
+    const pSeg = P.split('/').length;
+    const rootHubs: string[] = [];
+    const subHubs: string[] = [];
+    for (const h of hubPaths) {
+      if (!h.startsWith(P + '/')) continue;
+      const dir = h.split('/').slice(0, -1).join('/');
+      if (dir === P) rootHubs.push(h);
+      else if (dir.startsWith(P + '/') && dir.split('/').length === pSeg + 1) subHubs.push(h);
+    }
+    if (subHubs.length < 2) continue; // too little sub-structure to warrant an area map
+    const pName = P.split('/').pop()!;
+    const need = Math.ceil(subHubs.length / 2);
+    const hasArea = rootHubs.some((rh) => {
+      const rb = rh.split('/').pop()!.replace(/\.md$/, '');
+      if (isAreaMoc(rb, pName)) return true; // a hub named after the partition
+      if (/^(overview|home|index)$/i.test(rb)) return true; // a generic area map
+      return subHubs.filter((sh) => backlinks.get(sh)?.has(rh)).length >= need; // links a majority of the sub-hubs
+    });
+    if (!hasArea) {
+      findings.push({
+        kind: 'area-moc-gap',
+        path: subHubs[0],
+        detail: `"${P}/" has ${subHubs.length} mapped sub-topics but no area map tying them together. Create a "${pName} MOC" (type: moc) at ${P}/ that lists its sub-hubs and link it into [[Home]] — without it, a new note in this area gets parented to an arbitrary sibling sub-map.`,
+      });
+    }
   }
 
   // 5. sync-conflict duplicate files

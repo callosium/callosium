@@ -2812,11 +2812,11 @@ const HEALTH_GROUPS = [
     okTitle: 'every topic map is complete', okDesc: 'Each map-of-content links the notes in its folder — every topic browses end to end.', okCount: '0 gaps',
   },
   {
-    id: 'hubgaps', sev: 'notice', icon: '⌂', keys: ['hub-gap'],
-    title: n => healthPlural(n, 'folder') + ' not wired into your maps',
-    desc: 'A folder here either has no map-of-content, or its map is not linked from the parent map. That leaves a whole area hard to find — and your AIs will not know to file into it.',
-    count: n => healthPlural(n, 'folder'),
-    okTitle: 'every folder is on the map', okDesc: 'Each folder has a map-of-content and every map is linked from its parent — new areas stay findable.', okCount: '0 folders',
+    id: 'hubgaps', sev: 'notice', icon: '⌂', keys: ['hub-gap', 'area-moc-gap'],
+    title: n => healthPlural(n, 'area') + ' not wired into your maps',
+    desc: 'A folder or whole area here has no map-of-content (or its map is not linked from the parent), or an area has sub-maps but no top map tying them together. That leaves an area hard to find — and your AIs will not know to file into it, or will parent new notes to the wrong map.',
+    count: n => healthPlural(n, 'area'),
+    okTitle: 'every area is on the map', okDesc: 'Each folder has a map-of-content, every map is linked from its parent, and every area has a top map — new areas stay findable.', okCount: '0 areas',
   },
   {
     id: 'datedrift', sev: 'warn', icon: '⏱', keys: ['dated-note-drift'],

@@ -99,9 +99,14 @@ ok('recent with no time window returns a graceful hint', /no time window/i.test(
 // 1 May, overriding write_note's today stamp) but whose BODY records a dated
 // event IN the window is surfaced as real movement, annotated with the event
 // date — the stale-date "filled 7 Jul" case. Its topic word ("acme") matches its path.
+//
+// The event date is computed RELATIVE to today. A hardcoded one silently expires
+// the day it drifts past `days`: a literal "10 Jul 2026" against days:20 passed
+// every run until 30 Jul 2026, then failed on all three OSes with no code change.
+const inWindowISO = new Date(Date.now() - 5 * 864e5).toISOString().slice(0, 10);
 await client.callTool({
   name: 'write_note',
-  arguments: { path: 'Knowledge/Acme Deal 1 May 2026.md', content: '# Acme Deal\n\nAcme proposal filled 10 Jul 2026, pending sign-off.' },
+  arguments: { path: 'Knowledge/Acme Deal 1 May 2026.md', content: `# Acme Deal\n\nAcme proposal filled ${inWindowISO}, pending sign-off.` },
 });
 // control: same topic, out-of-window file date, and ONLY out-of-window body dates → must stay excluded
 await client.callTool({
@@ -110,7 +115,7 @@ await client.callTool({
 });
 const rescueOut = (await client.callTool({ name: 'recent', arguments: { question: 'what moved on acme', days: 20 } })).content[0].text;
 ok('recent RESCUES an out-of-window note with an in-window body event', /Acme Deal 1 May 2026\.md/.test(rescueOut), rescueOut.slice(0, 300));
-ok('recent dates the rescued note by its body event (10 Jul), annotated', /⟨in note: 2026-07-10/.test(rescueOut), rescueOut.slice(0, 300));
+ok(`recent dates the rescued note by its body event (${inWindowISO}), annotated`, new RegExp('⟨in note: ' + inWindowISO).test(rescueOut), rescueOut.slice(0, 300));
 ok('recent does NOT surface a topical note whose body dates are all out of window', !/Acme Legacy 2 May 2026\.md/.test(rescueOut), rescueOut.slice(0, 300));
 
 // `skills`: a SKILL.md filed in the brain is discoverable (cross-AI portability).

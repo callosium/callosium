@@ -1,6 +1,6 @@
 [package]
 name = "callosium-desktop"
-version = "0.1.0"
+version = "0.1.14"
 description = "Callosium — one brain, every AI, your files."
 authors = ["Callosium"]
 edition = "2021"

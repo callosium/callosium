@@ -60,7 +60,28 @@ jobs:
           projectPath: desktop
           tagName: desktop-v__VERSION__
           releaseName: 'Callosium Desktop v__VERSION__'
-          releaseBody: 'Download the installer below. Existing installs update themselves.'
+          # Honest body. The old one said only "Download the installer below.
+          # Existing installs update themselves." — which hid the thing every
+          # first-time Windows user actually hits: the installer is NOT
+          # Authenticode-signed, so SmartScreen warns and Smart App Control blocks
+          # it outright with no override. (The .sig next to it is the minisign
+          # UPDATER signature — a different system, and not what Windows checks.)
+          # npm is the path that works everywhere, so lead with it.
+          releaseBody: |
+            **Windows installer below.**
+
+            Heads up: this installer isn't code-signed yet, so Windows SmartScreen will
+            warn you — and if you have Smart App Control on, it will block it outright.
+
+            To skip that, install with npm instead. Same app, works on Windows, Mac and Linux:
+
+            ```
+            npm install -g callosium
+            ```
+
+            (Needs Node 20 or newer. First run downloads a ~130 MB language model, once.)
+
+            Existing desktop installs update themselves.
           releaseDraft: false
           prerelease: false
           args: --bundles nsis

@@ -1,11 +1,33 @@
 # Security
 
 Callosium is a local-first tool: your notes are plain files on your disk, the retrieval engine and
-MCP server run entirely on your machine, and the app only reaches the network for sign-in (optional,
-Connected tier) and the update check. There is no server that holds your data.
+MCP server run entirely on your machine, and the app reaches the network in three places: sign-in
+(optional, Connected tier), the update check, and a one-time language-model download on first run
+(about 130 MB, from Hugging Face via Amazon CloudFront) so meaning-based search works offline
+afterwards. The in-app Update button also runs `npm install -g callosium@latest` on the npm install
+path. No note is ever sent anywhere to run a search, and there is no server that holds your data.
 
 To report a vulnerability, open a private security advisory on the GitHub repo (Security → Report a
 vulnerability) rather than a public issue.
+
+## What Callosium keeps outside your vault
+
+Two of these matter if you are reasoning about sensitive notes:
+
+- **`~/.callosium/`** (Windows: `%USERPROFILE%\.callosium\`) — the local version history that lets
+  you undo a change an AI made to a note. It is a shadow copy of your notes kept in local git
+  repositories. Two properties are deliberate and worth stating plainly: it covers **every** folder
+  in your brain, including any you treat as private, and it is written with `git add --force`, so a
+  `.gitignore` in your vault does **not** exclude a note from it. Consequently, **deleting a note
+  from your vault does not erase it from the history** — that is what makes undo possible, but it
+  means "deleted" is not "erased". To erase permanently, delete the note and then delete this
+  folder. It never leaves your machine and is never transmitted anywhere.
+- **`%LOCALAPPDATA%\Callosium\models\`** (macOS/Linux: `~/.cache/callosium/models/`) — the
+  one-time ~130 MB language-model download. Contains no data of yours.
+- **Your AI clients' MCP config files** — removing the package does not edit them. Delete the
+  `callosium` entry under `mcpServers` in each client you connected.
+
+Uninstalling the package removes none of the above; see "Uninstalling Callosium" in the README.
 
 ## Dependency advisories — risk acceptance
 

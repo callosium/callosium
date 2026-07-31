@@ -304,6 +304,24 @@ const OB_PROVIDER_LOGO = {
   github: '<svg width="16" height="16" viewBox="0 0 24 24" fill="var(--dust)" style="flex-shrink:0"><path d="M12 .5C5.37.5 0 5.87 0 12.5c0 5.3 3.44 9.8 8.21 11.39.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.09 1.84 1.24 1.84 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 016 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.62-5.49 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.83.58C20.56 22.3 24 17.8 24 12.5 24 5.87 18.63.5 12 .5z"/></svg>',
 };
 
+// ── External links from inside the app ──
+// A plain <a href> is wrong here: in the desktop webview it navigates the trusted
+// sign-in surface away from the app and there is no way back. These render as
+// buttons and hand the URL to the system browser instead — the Tauri opener plugin
+// when it is present (registered at desktop/src-tauri/src/lib.rs:344, permission
+// "opener:default"), otherwise a plain window.open. If neither is available the
+// click is a harmless no-op; it can never strand the user mid-signup.
+function ob_extLink(url, label){
+  return '<button type="button" data-ext="'+esc(url)+'" style="background:none;border:0;padding:0;font:inherit;color:var(--dust);text-decoration:underline;cursor:pointer">'+label+'</button>';
+}
+function ob_ext(url){
+  try{
+    const op = window.__TAURI__ && window.__TAURI__.opener;
+    if(op && typeof op.openUrl === 'function'){ op.openUrl(url); return; }
+  }catch(e){}
+  try{ window.open(url, '_blank', 'noopener'); }catch(e){}
+}
+
 // ── VIEW: sign-up. Real Supabase Auth (Google/GitHub OAuth or email);
 // the free/local path is "continue as guest" (no account, notes never leave). ──
 function ob_signupHTML(){
@@ -318,6 +336,18 @@ function ob_signupHTML(){
     + ob_wordmark()
     + '<h1 style="font-family:var(--pixel);font-weight:700;font-size:30px;margin:20px 0 8px">'+t('welcome in.','أهلًا بك.')+'</h1>'
     + '<p style="color:var(--dust);font-size:13.5px;line-height:1.6;margin-bottom:22px">'+t('sign in to save your place and sync across devices later. your notes always stay on this device.','سجّل الدخول لحفظ مكانك والمزامنة بين الأجهزة لاحقًا. ملاحظاتك تبقى دائمًا على هذا الجهاز.')+'</p>'
+    // Notice at the point of collection. This screen takes a name, an email and a
+    // password and sends them to Supabase, so the terms have to be reachable from
+    // here — /terms itself asserts "by using the Service you agree to these terms".
+    // Rendered as BUTTONS, not <a href>: inside the desktop webview a real link
+    // navigates the trusted sign-in surface away from the app. ob_ext() opens the
+    // system browser instead.
+    + '<p style="font-family:var(--mono);font-size:10.5px;color:var(--faint);line-height:1.7;margin:0 0 16px">'
+      + t('by continuing you agree to our ','بالمتابعة فإنك توافق على ')
+      + ob_extLink('https://callosium.com/terms', t('Terms','الشروط'))
+      + t(' and ',' و')
+      + ob_extLink('https://callosium.com/privacy', t('Privacy Policy','سياسة الخصوصية'))
+      + '.</p>'
     + prov('google', t('Continue with Google','المتابعة عبر Google'))
     + prov('github', t('Continue with GitHub','المتابعة عبر GitHub'))
     + '<div style="display:flex;align-items:center;gap:10px;margin:16px 0"><span style="flex:1;height:1px;background:var(--edge)"></span><span style="font-family:var(--mono);font-size:10px;color:var(--faint)">'+t('or with email','أو عبر البريد')+'</span><span style="flex:1;height:1px;background:var(--edge)"></span></div>'
@@ -692,6 +722,7 @@ function ob_wire(){
   });
   el.querySelectorAll('[data-ob-signup]').forEach(x=> x.onclick=()=> ob_doSignup(x.dataset.obSignup));
   el.querySelectorAll('[data-ob-oauth]').forEach(x=> x.onclick=()=> ob_oauth(x.dataset.obOauth));
+  el.querySelectorAll('[data-ext]').forEach(x=> x.onclick=()=> ob_ext(x.dataset.ext));
   const obEmailBtn = el.querySelector('[data-ob-email]'); if(obEmailBtn) obEmailBtn.onclick = ob_emailAuth;
   el.querySelectorAll('[data-ob-dir]').forEach(x=> x.onclick=()=> ob_selectDir(x.dataset.obDir));
   // paste-a-path box: jump straight to a typed/pasted folder (reuses ob_selectDir

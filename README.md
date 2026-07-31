@@ -217,7 +217,7 @@ A query runs through several independent lanes at once, and their results are fu
 
 The lanes are combined with Reciprocal Rank Fusion, which merges rankings without needing the lanes to agree on a score scale. That fused order is the answer. There is no second-stage neural reranker: one was built, measured, and removed, for reasons worth reading below.
 
-Everything runs locally. The only time Callosium touches the network is to sign in and to check for updates. No note ever leaves the device for a search.
+Search runs locally. Callosium touches the network in three places: signing in (optional), the update check, and the one-time language-model download on first run described above. No note ever leaves the device for a search, and nothing is uploaded to make search work.
 
 ### The honesty gate
 
@@ -332,7 +332,12 @@ About **4.6 times** more often. Plain keyword search buries the answer note unde
 
 ### Honesty: the number that matters most
 
-The negative family is 1,450 questions about things that do not exist, nonsense entities like "wuzzleforth" and "zorblatt." The engine should refuse every one.
+The negative family is 1,450 questions about things that do not exist — invented, pronounceable
+nonsense words that appear nowhere in the vault. (The generator checks each one against the brain
+first and drops any that turn out to exist, so a real mention can never quietly weaken the family.
+The words themselves are deliberately not printed here: this README ends up inside people's vaults,
+and a vault containing them is a vault where those questions are no longer negatives.) The engine
+should refuse every one.
 
 Raw, it refused 74.7%. That number, on its own, would be misleading, so we did what we always do with a raw benchmark number: we had fifteen independent AI judges read every single one of the 367 cases the engine did not refuse, and classify what actually happened.
 
@@ -426,8 +431,27 @@ Everything is plain Markdown and YAML in a folder you choose. No database, no cl
 
 **Status: early access. Follow the build: [callosium.com](https://callosium.com)**
 
+## Uninstalling Callosium
+
+Your notes are yours and stay where they are — uninstalling never touches your vault. But Callosium
+does keep three things outside it, and a package uninstall does not remove them. To leave no trace:
+
+1. **The version history.** `~/.callosium/` (Windows: `%USERPROFILE%\.callosium\`). This is the local
+   safety net that lets you undo a change an AI made. It is a shadow copy of your notes, it covers
+   **every** folder in your brain including ones you treat as private, and **deleting a note from
+   your vault does not remove it from here**. Delete this folder to erase that history. It never
+   leaves your machine.
+2. **The language model cache.** `%LOCALAPPDATA%\Callosium\models\` on Windows,
+   `~/.cache/callosium/models/` on macOS and Linux — about 130 MB, downloaded once.
+3. **The MCP entry in each AI client you connected.** Removing the package does not edit your
+   clients' config files. Open each one and delete the `callosium` entry under `mcpServers`
+   (`callosium pair` will tell you which file each client uses).
+
+Then remove the package itself: `npm uninstall -g callosium`, or Add/Remove Programs for the
+desktop app.
+
 ## Docs and policies
 
 - **[White paper](#white-paper)**: the engine, the benchmarks, and what every number means, measured honestly.
-- **[Security policy](SECURITY.md)**: what Callosium touches on your machine (login and update-check only), and how to report a vulnerability.
+- **[Security policy](SECURITY.md)**: what Callosium touches on your machine, what it keeps outside your vault, and how to report a vulnerability.
 - **[License](LICENSE)**: Apache-2.0. Yours to use, fork, and keep.

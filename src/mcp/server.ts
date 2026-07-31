@@ -1838,6 +1838,13 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
           `You are connected to a Callosium brain as "${agent.displayName}".`,
           `- FIRST call get_map to learn how this brain is organized and where things live; it is your navigation map. Call get_filing_rules before writing/filing anything new.`,
           `- recall FIRST before answering anything about the owner's world; relay "not in the brain" honestly, relay clarify questions to the user, and mention any typo corrections recall reports.`,
+          // The engine's own honesty gate keys on absent VOCABULARY (absentMass counts
+          // only terms with df=0), so it catches "who is frimbulator" and cannot catch
+          // "what is our refund policy" when every word is in the vault but the answer
+          // is not. Measured: negativesRefused 18.8% on the in-domain natural bench.
+          // Until the gate can tell answer-absence from word-absence, the reading agent
+          // is the honest layer — so say so here, by default, for every user.
+          `- JUDGE WHETHER THE NOTES ACTUALLY ANSWER THE QUESTION. recall returns the closest notes it has, which is not the same as the answer existing. If the returned notes only mention the same topic or the same words, but do not actually contain what was asked, say plainly that it is not in the brain yet. Never infer a specific fact — a number, a name, a policy, a date, a preference — from a note that merely discusses the subject. An honest "your notes don't cover this" is always better than a confident answer assembled from adjacent material.`,
           `- COUNT/LIST questions ("how many skills", "what's active") → list_notes/overview, not recall.`,
           `- "WHAT DID I DO / what happened / what moved" over a period (yesterday, last N days, last two weeks, this month) → **recent** (notes DATED in the window, newest first + paths), then read_note. Do NOT use recall/search for these — they rank by topic and surface old notes.`,
           `- "BRIEF ME on X / get me up to speed / what's the status of / pending on X" → **gather** (a context pack: the most relevant notes with paths + excerpts, in one call), then read_note the ones you need in full.`,

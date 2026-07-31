@@ -822,7 +822,29 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
       // returned the whole window unfiltered (Arabic-first audience). Match by
       // token-set membership over path + first 500 chars — still word-level, so
       // "are" won't hit "software" and "opportunities" hits the /Opportunities/ segment.
-      const topic = [...new Set(tokenize(question).filter((w) => !STOP.has(w)))];
+      // The WINDOW SIZE is not a topic. "what did I do in the last 3 days" put "3"
+      // into topic, so a note had to literally contain "3" to survive — measured:
+      // "last week" returned 11 notes, "last 3 days" returned 0 ("matching 3"), and
+      // "over the last 30 days" matched one note only because its body said
+      // "30 June". This is the phrasing get_map itself routes to `recent`, and the
+      // failure mode is the worst one for a memory product: a confident "nothing
+      // happened" about work that is right there.
+      // Drop bare numerals and spelled-out counts. NOT by clearing topic when `days`
+      // is passed: topicMatch returns false on an empty topic, which switches OFF the
+      // event-time rescue (an out-of-window note whose BODY records an in-window
+      // event), so "recent with days:N" would stop surfacing exactly the notes that
+      // feature exists for. The window and the topic are independent — `days` decides
+      // WHEN, the question still decides WHAT.
+      // The tokenizer can glue a stopword to a digit ("past 7"), so strip digits from
+      // each token and drop it if what remains is empty or itself a stop word.
+      const COUNT_WORD = new Set(['one', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+        'eleven', 'twelve', 'fourteen', 'fifteen', 'twenty', 'thirty', 'sixty', 'ninety', 'hundred', 'couple', 'few', 'several']);
+      const isWindowSize = (w: string) => {
+        if (COUNT_WORD.has(w)) return true;
+        const bare = w.replace(/[\d\s]+/g, '').trim();
+        return bare === '' || STOP.has(bare);
+      };
+      const topic = [...new Set(tokenize(question).filter((w) => !STOP.has(w) && !isWindowSize(w)))];
       const topicMatch = (f: string, text: string) => {
         if (topic.length === 0) return false;
         const hay = new Set(tokenize(f + ' ' + text.slice(0, 500)));

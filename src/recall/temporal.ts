@@ -27,6 +27,16 @@ export type DateSource = 'name' | 'path' | 'front';
  *  "31 Apr" → 1 May, "29 Feb 2026" (not a leap year) → 1 Mar), which would
  *  surface a nonexistent prose date as a real (possibly in-window) event. So we
  *  build the date and confirm the month/day came back unchanged. */
+/**
+ * UTC-midnight of the LOCAL calendar day containing `t`.
+ * Pairs with filing/engine.ts's dateParts(), which stamps notes from local parts;
+ * mkUTC() then reads those back as UTC midnight. Both ends must agree on the day.
+ */
+function localDayStartUTC(t: number): number {
+  const d = new Date(t);
+  return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
 function mkUTC(y: number, month1: number, day: number): number | null {
   if (!(month1 >= 1 && month1 <= 12 && day >= 1 && day <= 31)) return null;
   const ms = Date.UTC(y, month1 - 1, day);
@@ -101,8 +111,18 @@ function foldDigits(s: string): string {
 
 export function parsePeriod(question: string, now: number): { fromMs: number; toMs: number; label: string } | null {
   const q = foldDigits(question.toLowerCase());
-  const to = now + DAY; // inclusive of today
-  const win = (days: number, label: string) => ({ fromMs: now - days * DAY, toMs: to, label });
+  // Notes are NAMED AND STAMPED from LOCAL calendar parts (filing/engine.ts
+  // dateParts uses getFullYear/getMonth/getDate) and then re-read as UTC midnight
+  // (mkUTC). Building a window from the raw `now` timestamp therefore skews it by
+  // the user's UTC offset: at UTC−k writing at local hour h, their own note drops
+  // out of "today" once k + h > 24 — minute-exact, and invisible from any positive
+  // offset, which is why it never showed up from Doha. After ~5pm Pacific,
+  // "what did I do today" answered "nothing" about a note written an hour earlier.
+  // Anchor every window on UTC-midnight of the LOCAL calendar day, so the window
+  // and the note's own date agree on which day it is.
+  const anchor = localDayStartUTC(now);
+  const to = anchor + DAY; // inclusive of today
+  const win = (days: number, label: string) => ({ fromMs: anchor - days * DAY, toMs: to, label });
   // explicit "last/past N days|weeks|months"
   const nWord: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, a: 1, couple: 2, few: 3 };
   const m = q.match(/\b(?:last|past|previous|recent)\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|a|couple(?:\s+of)?|few)\s+(day|days|week|weeks|month|months)\b/);
@@ -123,8 +143,8 @@ export function parsePeriod(question: string, now: number): { fromMs: number; to
   // Arabic short words need letter-boundary lookarounds (there is no \b for Arabic): bare "امس"
   // (yesterday) is a substring of "خامس" (fifth) and "اليوم" (today) is a prefix of "اليومي/اليومية"
   // (daily) — without boundaries, ordinal/"daily" topical questions would force a false window.
-  if (/\byesterday\b/.test(q) || /(?<![ء-ي])(أمس|امس)(?![ء-ي])|(البارحة|مبارح|امبارح)/.test(q)) return { fromMs: now - 2 * DAY, toMs: now, label: 'yesterday' };
-  if (/\b(today|so far today)\b/.test(q) || /(?<![ء-ي])اليوم(?![ء-ي])|النهاردة/.test(q)) return { fromMs: now - DAY, toMs: to, label: 'today' };
+  if (/\byesterday\b/.test(q) || /(?<![ء-ي])(أمس|امس)(?![ء-ي])|(البارحة|مبارح|امبارح)/.test(q)) return { fromMs: anchor - DAY, toMs: anchor, label: 'yesterday' };
+  if (/\b(today|so far today)\b/.test(q) || /(?<![ء-ي])اليوم(?![ء-ي])|النهاردة/.test(q)) return { fromMs: anchor, toMs: to, label: 'today' };
   // two weeks BEFORE one week — Arabic "أسبوعين" (dual) starts with "أسبوع", so it must be tested first.
   if (/\b(last|past|this|previous)\s+(fortnight|two weeks)\b/.test(q) || /\btwo weeks\b/.test(q) || /(أسبوعين|اسبوعين)/.test(q)) return win(14, 'last two weeks');
   if (/\b(last|past|this|previous)\s+(week)\b/.test(q) || /(الأسبوع|الاسبوع)\s*(الماضي|الفائت|المنصرم|الحالي|ده)|آخر\s*(أسبوع|اسبوع)/.test(q)) return win(7, 'last week');

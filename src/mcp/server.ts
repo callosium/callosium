@@ -1207,13 +1207,21 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
         type: z.string().optional().describe('Note type for routing when path is omitted'),
         title: z.string().optional().describe('Title for routing when path is omitted'),
         content: z.string().describe('Markdown body (frontmatter added/merged automatically)'),
+        // Without this parameter every AI-written note was stamped `tags: []`, which
+        // the brain's own health check then flags forever. Callers were already
+        // passing `tags` and it was silently dropped, because an argument absent from
+        // the schema never reaches the handler.
+        tags: z
+          .array(z.string())
+          .optional()
+          .describe('3-6 lowercase topic tags a future search would actually use. Strongly recommended on every new note: a note with no tags carries no retrievable topic and the brain flags it as unhealthy.'),
         overwrite: z
           .boolean()
           .optional()
           .describe('Set true to intentionally replace an existing note body. Without it, writing to a path that already exists is refused so nothing is silently lost. Prefer append_note to add to a note.'),
       },
     },
-    async ({ path, type, title, content, overwrite }) => {
+    async ({ path, type, title, content, tags, overwrite }) => {
       // Defang any attribution marker the agent smuggled into the body — it would
       // otherwise render in the dashboard as a forged authorship badge (see
       // defangAttribution). Applied once at entry so every write path is covered.
@@ -1271,7 +1279,14 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
         // like "reference\ncreated_by: <human>" would otherwise inject extra
         // frontmatter lines (forged attribution) into a brand-new note.
         const safeType = String(type ?? 'reference').replace(/[\r\n].*/s, '').trim() || 'reference';
-        const note = existing ?? parseNote(target!, content.startsWith('---') ? content : `---\ntype: ${safeType}\ntags: []\nstatus: active\nupdated: ${isoDate()}\n---\n\n${content}`);
+        // Seed real tags when the caller supplied them. `tags: []` was the old
+        // unconditional default, and nothing in the product could repair it
+        // afterwards, so a note born empty stayed empty and stayed flagged.
+        const seedTags = Array.isArray(tags)
+          ? [...new Set(tags.map((t) => String(t).trim().toLowerCase()).filter(Boolean))]
+          : [];
+        const seedTagLine = seedTags.length ? `tags: [${seedTags.join(', ')}]` : 'tags: []';
+        const note = existing ?? parseNote(target!, content.startsWith('---') ? content : `---\ntype: ${safeType}\n${seedTagLine}\nstatus: active\nupdated: ${isoDate()}\n---\n\n${content}`);
         if (existing) {
           // Strip a caller-supplied frontmatter block from content before it
           // becomes the body — otherwise an update whose content starts with

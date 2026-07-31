@@ -1,7 +1,7 @@
 {
   "name": "callosium-desktop",
   "private": true,
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Callosium desktop shell (Tauri) — bundles and runs the Node dashboard server natively.",
   "type": "module",
   "scripts": {

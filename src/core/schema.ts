@@ -12,7 +12,9 @@ import type { Vault } from './vault.ts';
 const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SCHEMA_IN_BRAIN = 'System/brain.json';
 
-export async function loadSchema(vault: Vault): Promise<{ schema: BrainSchema; source: 'brain' | 'default' }> {
+export async function loadSchema(
+  vault: Vault,
+): Promise<{ schema: BrainSchema; source: 'brain' | 'default' | 'packaged-default' }> {
   if (vault.exists(SCHEMA_IN_BRAIN)) {
     let raw: string | null = null;
     try {
@@ -49,8 +51,13 @@ export async function loadSchema(vault: Vault): Promise<{ schema: BrainSchema; s
         // the very path the README describes as leaving your files untouched.
         // The moment the owner edits the file they remove/ignore the marker and get
         // strict checking, which is the point at which they have actually chosen it.
+        // Reported as its OWN source, not folded into 'default': the caller has to be
+        // able to tell "we seeded this file and it loaded fine" apart from "a brain.json
+        // exists but we could not load it". check.ts warns loudly about the second, and
+        // collapsing them made every freshly-initialised brain claim its own valid schema
+        // was corrupt.
         const derived = (parsed as { derivedFrom?: unknown }).derivedFrom;
-        if (derived === 'packaged-default') return { schema, source: 'default' };
+        if (derived === 'packaged-default') return { schema, source: 'packaged-default' };
         return { schema, source: 'brain' };
       } catch (e) {
         console.warn(`[callosium] ${SCHEMA_IN_BRAIN} isn't a valid brain schema (${(e as Error).message}); using the default until you fix it.`);

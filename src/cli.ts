@@ -149,8 +149,16 @@ async function main() {
       const vault = new Vault(target);
       const { schema } = await loadSchema(vault);
       // Copy the schema INTO the brain so the user can see and edit their constitution.
+      // Stamp it as the PACKAGED DEFAULT, not an owner-authored constitution: loadSchema
+      // reads that stamp back and keeps `source` as 'default', which keeps `strict` false
+      // in check.ts. Without it, merely running `callosium init` over an existing vault
+      // flips every plain Obsidian note to "malformed" — measured at 3 findings per note,
+      // so ~3,600 on a real 1,200-note vault, on the path the README calls adopting a
+      // vault where "your files are never reformatted". The dashboard's handleInit stamps
+      // the same field; this is the CLI half, which is the README's own quickstart.
       if (!vault.exists(SCHEMA_IN_BRAIN)) {
-        await vault.writeFile(SCHEMA_IN_BRAIN, JSON.stringify(schema, null, 2));
+        const seeded = { ...(schema as Record<string, unknown>), derivedFrom: 'packaged-default' };
+        await vault.writeFile(SCHEMA_IN_BRAIN, JSON.stringify(seeded, null, 2));
       }
       let created = 0;
       for (const p of schema.partitions.core) {

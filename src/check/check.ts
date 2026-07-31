@@ -45,7 +45,9 @@ export interface CheckReport {
   findings: Finding[];
   /** Findings grouped by kind, for the summary line. */
   byKind: Record<string, number>;
-  schemaSource: 'brain' | 'default';
+  // 'packaged-default' = the copy `init` seeded and we loaded fine (strict OFF by design);
+  // 'default' = no usable brain.json, we fell back. Distinct because only the second is a fault.
+  schemaSource: 'brain' | 'default' | 'packaged-default';
   /** Checks this run did NOT perform, and why. Empty = the whole audit ran. A report that
    *  quietly drops a check is a clean bill of health the product never earned, so the
    *  omission travels WITH the report to every surface that shows it (CLI, MCP
@@ -226,8 +228,12 @@ export async function brainCheck(vault: Vault, shared?: { texts?: VaultTexts; bu
   // every check below: a vault that reported 40 format findings yesterday reports 0 today
   // and the Health card affirms "nothing malformed". Record the omission on the report so
   // the check that didn't run can't be read as a check that passed.
+  // 'packaged-default' is NOT a load failure: the file is there, it parsed, and it is
+  // the copy `init` seeded. Only a genuine 'default' (we have a brain.json on disk and
+  // could not use it) earns this warning — otherwise every freshly-initialised brain
+  // opened by telling its owner their valid schema was corrupt.
   const skipped: CheckReport['skipped'] = [];
-  if (!strict && vault.exists(SCHEMA_IN_BRAIN)) {
+  if (source === 'default' && vault.exists(SCHEMA_IN_BRAIN)) {
     skipped.push({
       check: 'frontmatter-conformance',
       reason: `${SCHEMA_IN_BRAIN} is present but could not be loaded — it isn't valid JSON, or isn't a valid brain schema. Your notes were NOT checked against your own format this run. Fix the file (or delete it to fall back to the default) and check again.`,

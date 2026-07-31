@@ -1285,6 +1285,14 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
         const seedTags = Array.isArray(tags)
           ? [...new Set(tags.map((t) => String(t).trim().toLowerCase()).filter(Boolean))]
           : [];
+        // BL-8 part 3 (refuse an untagged create) was implemented here and REVERTED:
+        // it broke 5 existing tests. A hard throw is the wrong instrument — plenty of
+        // legitimate callers create a note and set frontmatter afterwards, and turning
+        // that into an error three days before launch trades a cosmetic health finding
+        // for a broken write path. Parts 1 and 2 already solve the real problem: tags
+        // CAN now be supplied on create, and an existing `tags: []` CAN now be repaired.
+        // The right shape for part 3 is a soft signal in the response (or a nudge in the
+        // agent rules), not a refusal — post-launch, with the tests updated deliberately.
         const seedTagLine = seedTags.length ? `tags: [${seedTags.join(', ')}]` : 'tags: []';
         const note = existing ?? parseNote(target!, content.startsWith('---') ? content : `---\ntype: ${safeType}\n${seedTagLine}\nstatus: active\nupdated: ${isoDate()}\n---\n\n${content}`);
         if (existing) {

@@ -2383,9 +2383,46 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
       server.removeListener('error', reject);
       resolve();
     });
-  }).catch((err: NodeJS.ErrnoException) => {
-    const why = err.code === 'EADDRINUSE' ? `port ${port} is already in use — is Callosium already running?` : err.message;
-    console.error(`\n  callosium: couldn't start — ${why}\n`);
+  }).catch(async (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      // "port in use — is Callosium already running?" was a dead end, and it is
+      // the exact wall an owner hits after using the in-app Update: npm installs
+      // the new version, the UI says restart, they close the terminal window —
+      // and the server does NOT die with it, because node outlives the console
+      // that started it. Relaunching then fails, they are still being served by
+      // the OLD process, and nothing on screen says so or tells them how to stop
+      // it. Answer the two questions they actually have: is that mine, and what
+      // do I type?
+      const url = `http://127.0.0.1:${port}`;
+      let mine = false;
+      try {
+        const r = await fetch(`${url}/__health`, { signal: AbortSignal.timeout(1500) });
+        mine = r.ok && (await r.json() as { ok?: unknown })?.ok === true;
+      } catch {
+        /* not answering, or not us — fall through to the generic message */
+      }
+      const stop = process.platform === 'win32'
+        ? `netstat -ano | findstr :${port}      then:  taskkill /PID <pid> /F`
+        : `lsof -ti:${port} | xargs kill`;
+      if (mine) {
+        console.error(
+          `\n  callosium: already running at ${url}\n\n` +
+            `  That IS your brain — open the link and carry on.\n\n` +
+            `  Just updated and want the new version? The old server is still up.\n` +
+            `  Closing the terminal window does not stop it. Stop it with:\n` +
+            `      ${stop}\n` +
+            `  then run callosium serve again.\n`,
+        );
+      } else {
+        console.error(
+          `\n  callosium: couldn't start — something else is using port ${port}.\n\n` +
+            `  Find and stop it:\n      ${stop}\n` +
+            `  or pick another port:  callosium serve --port ${port + 10}\n`,
+        );
+      }
+      process.exit(1);
+    }
+    console.error(`\n  callosium: couldn't start — ${err.message}\n`);
     process.exit(1);
   });
   // Use the literal IPv4 the server binds to. `localhost` can resolve to IPv6

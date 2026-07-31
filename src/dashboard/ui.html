@@ -7187,10 +7187,19 @@ function renderIndexBanner(){
   // a transient green "✓ ready" flip the moment a build finishes, so completion is
   // visible instead of the banner just vanishing. startEmbedPoll sets/clears the flag.
   const done = !building && !error && !!state.embedJustDone;
-  const show = building || error || done;
+  // Meaning-search is OFF on a brain that HAS notes. Nothing rendered here at all
+  // before: embedSnapshot() returns 'idle' and this function only drew for
+  // building/error/done, so the user got a "keyword only" chip and "meaning points:
+  // 0" — neither of which names the cure. Only meaningful once the overview has
+  // actually loaded and the brain is onboarded with at least one note.
+  const ov = state.overview;
+  const off = !building && !error && !done && !state.embedBannerDismissed
+    && !!ov && !!ov.onboarded && ov.semantic === false
+    && (((ov.vitals && ov.vitals.notes) || 0) > 0);
+  const show = building || error || done || off;
   let el = document.getElementById('calIndexBanner');
   if(!show){ if(el) el.remove(); __layoutBanners(); return; }
-  const mode = error ? 'error' : done ? 'done' : 'building';
+  const mode = error ? 'error' : done ? 'done' : off ? 'off' : 'building';
   // (Re)build the STRUCTURE only on first mount or an error<->building switch. Every
   // ~2.5s status poll then only updates the text + bar width, so the shimmer animation
   // runs UNINTERRUPTED (rebuilding it each poll would reset it and look stuttery).
@@ -7203,10 +7212,20 @@ function renderIndexBanner(){
     }
     el = document.createElement('div');
     el.id = 'calIndexBanner'; el.dataset.mode = mode;
-    el.style.cssText = 'position:fixed;left:0;right:0;z-index:99998;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:8px 16px;font-family:var(--mono,monospace);font-size:12.5px;color:var(--on-accent,#07060B);box-shadow:0 2px 12px rgba(0,0,0,.35);background:'+(error?'var(--danger,#FF3355)':done?'var(--acid,#52F2B8)':'var(--synapse,#FF2E88)');
+    el.style.cssText = 'position:fixed;left:0;right:0;z-index:99998;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;padding:8px 16px;font-family:var(--mono,monospace);font-size:12.5px;color:var(--on-accent,#07060B);box-shadow:0 2px 12px rgba(0,0,0,.35);background:'+(error?'var(--danger,#FF3355)':done?'var(--acid,#52F2B8)':off?'var(--amber,#FFB020)':'var(--synapse,#FF2E88)');
     const msgEl = document.createElement('span'); msgEl.id='calBannerMsg'; msgEl.style.fontWeight='500';
     el.appendChild(msgEl);
-    if(error){
+    if(error || off){
+      if(off){
+        // Name the cure AND make it one click. Drives the existing top-bar re-index
+        // button rather than duplicating its logic, so the busy/hint states it already
+        // manages stay correct.
+        const go = document.createElement('button');
+        go.textContent = t('turn it on','فعّله');
+        go.style.cssText = 'background:transparent;border:1px solid var(--on-accent,#07060B);color:var(--on-accent,#07060B);font-family:inherit;font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;padding:4px 10px;cursor:pointer';
+        go.onclick = ()=>{ const b = document.getElementById('reindexBtn'); if(b) b.click(); };
+        el.appendChild(go);
+      }
       const x = document.createElement('button');
       x.textContent = '✕'; x.title = t('dismiss','إخفاء'); x.setAttribute('aria-label','dismiss');
       x.style.cssText = 'background:transparent;border:none;color:var(--on-accent,#07060B);font-size:14px;line-height:1;cursor:pointer;padding:2px 6px;opacity:.85';
@@ -7230,6 +7249,8 @@ function renderIndexBanner(){
   const msg = document.getElementById('calBannerMsg');
   if(error){
     if(msg) msg.textContent = t('semantic search unavailable · keyword search works · re-index to retry','البحث الدلالي غير متاح · البحث بالكلمات يعمل · أعد الفهرسة');
+  } else if(off){
+    if(msg) msg.textContent = t('meaning search is off · keyword search works · turn it on to search by meaning','البحث بالمعنى غير مفعّل · البحث بالكلمات يعمل · فعّله للبحث بالمعنى');
   } else if(done){
     if(msg) msg.textContent = t('✓ smarter search is ready','✓ البحث الذكي جاهز');
   } else {

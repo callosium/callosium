@@ -820,6 +820,36 @@ function startEmbeddingWorker(dir: string, texts: VaultTexts): void {
   embedStatus = { building: true, phase: 'embed', done: 0, total: 0, modelPct: null, error: null, brain: dir };
   embedChain = embedChain.then(() => runEmbed(run, dir, texts, genAtStart)).catch(() => {});
 }
+// Turn meaning-search ON for a brain that does not have it yet.
+//
+// startEmbeddingWorker used to have exactly ONE caller — the last line of
+// handleIngest — so the other three documented ways into a brain (`callosium
+// init`, the README's own quickstart, and a plain `serve` boot) all left semantic
+// permanently off. Notes an AI wrote over MCP never triggered a build either, so
+// it was not self-healing. The user saw a "keyword only" chip and "meaning points:
+// 0", neither of which names the cure, while the README promised the model
+// download in a callout directly under the two commands that guarantee it never
+// happens.
+//
+// Idempotent and cheap on the common path: if the sidecar already exists we only
+// warm the model, which is exactly what the boot path did before. An empty brain
+// is skipped — nothing to embed, and no reason to pull ~130 MB.
+async function ensureSemantic(dir: string): Promise<void> {
+  try {
+    const vault = Vault.open(dir);
+    if (await loadEmbeddings(vault)) {
+      await warmModel(); // already on — just don't make the first Ask pay the ~4s cold load
+      return;
+    }
+    // Don't stack a second build on top of one already running for this brain.
+    if (embedStatus.building && embedStatus.brain === dir) return;
+    const texts = await loadTexts(vault, false); // no rank index needed to embed
+    if (!texts.files.length) return;
+    startEmbeddingWorker(dir, texts);
+  } catch {
+    /* semantic is an upgrade lane, never a gate — recall stays keyword-only */
+  }
+}
 async function runEmbed(run: number, dir: string, texts: VaultTexts, genAtStart: number): Promise<void> {
   if (run !== embedRun) return; // superseded before our turn even came up — don't build or write
   // Everything (incl. the synchronous Vault.open, which THROWS if the folder was
@@ -2078,6 +2108,11 @@ async function handleInit(res: http.ServerResponse, body: Json) {
     }
     setBrain(dir); // resets every brain-scoped cache atomically (no separate dropCache needed)
     send(res, 200, { ok: true, path: dir, partitions: schema.partitions.core.map((p) => p.path), failed });
+    // Bring meaning-search up too. `init` on an EXISTING folder of notes (the
+    // README's own quickstart) used to leave semantic off forever, because ingest
+    // was the only path that ever started a build. Fired after the response so it
+    // never delays it, and never awaited.
+    void ensureSemantic(dir);
   } catch (err) {
     send(res, 400, { error: (err as Error).message });
   }
@@ -2358,16 +2393,14 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
   // a browser that "can't reach the link" even though the server is up.
   const url = `http://127.0.0.1:${port}`;
   liveBanner(url);
-  // Warm the embedding model in the background so the first Ask doesn't pay the
-  // ~4s cold pipeline load. Gated on an EXISTING embedding cache for this brain:
-  // without one the semantic lane never runs, so downloading ~120MB would be
-  // waste (a fresh brain gets its model during ingest instead). A failure
-  // (offline, blocked network) is swallowed, recall keeps working keyword-only.
-  if (brainPath) {
-    void loadEmbeddings(Vault.open(brainPath))
-      .then((emb) => (emb ? warmModel() : null))
-      .catch(() => { /* semantic is an upgrade lane, never a gate */ });
-  }
+  // Bring meaning-search up in the background. This used to be gated on an
+  // EXISTING embedding cache, on the reasoning that a fresh brain gets its model
+  // during ingest — but a brain reached by `callosium init` or by `serve` on a
+  // folder that was never ingested has notes and no cache, and the gate meant it
+  // stayed keyword-only forever with nothing on screen naming the cure. ensureSemantic
+  // keeps the old warm-only behaviour when the cache is already there, and builds
+  // when it isn't. Never awaited, never fatal: recall works keyword-only throughout.
+  if (brainPath) void ensureSemantic(brainPath);
   // best-effort auto-open — UNLESS embedded in the desktop shell, which shows the
   // dashboard in its own window and would otherwise get a duplicate browser tab.
   if (!process.env.CALLOSIUM_DESKTOP) {

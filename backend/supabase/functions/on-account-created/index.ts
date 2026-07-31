@@ -61,7 +61,7 @@ function welcomeText(name: string | null): string {
     "Here's what you just switched on: every AI you connect now reads from and writes to one shared memory, and that memory is a folder of plain files on your own computer. Teach one AI something and the next one already knows it. Nothing leaves your machine.",
     '',
     'WHAT TO DO NEXT',
-    '1. In the Callosium dashboard (already running on your computer), open Agents and connect your first AI. Claude, Cursor, ChatGPT-compatible apps, 23 clients supported.',
+    '1. In the Callosium dashboard (already running on your computer), open Agents and connect your first AI. Claude, Cursor, ChatGPT-compatible apps, 27 clients supported.',
     '2. Ask it something you have told an AI before. Watch it recall the answer with the exact source cited.',
     "3. That's it. It gets a little smarter every time you or your AI writes to it.",
     '',
@@ -107,7 +107,7 @@ function welcomeHtml(name: string | null): string {
             <tr><td bgcolor="#F5F2FA" style="background-color:#F5F2FA; border-left:3px solid #FF2E88; padding-top:16px; padding-bottom:16px; padding-left:20px; padding-right:20px;">
               <table width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr><td style="font-family:'Courier New', Courier, monospace; font-size:12px; line-height:18px; color:#544E64; letter-spacing:1px;">WHAT TO DO NEXT</td></tr>
-                <tr><td style="padding-top:8px; font-family:Georgia, 'Times New Roman', serif; font-size:15px; line-height:24px; color:#1A1721;"><strong>1.</strong> In the Callosium dashboard (already running on your computer), open <strong>Agents</strong> and connect your first AI: Claude, Cursor, ChatGPT-compatible apps, 23 clients supported.<br><br><strong>2.</strong> Ask it something you have told an AI before. Watch it recall the answer with the exact source cited.<br><br><strong>3.</strong> That's it. It gets a little smarter every time you or your AI writes to it.</td></tr>
+                <tr><td style="padding-top:8px; font-family:Georgia, 'Times New Roman', serif; font-size:15px; line-height:24px; color:#1A1721;"><strong>1.</strong> In the Callosium dashboard (already running on your computer), open <strong>Agents</strong> and connect your first AI: Claude, Cursor, ChatGPT-compatible apps, 27 clients supported.<br><br><strong>2.</strong> Ask it something you have told an AI before. Watch it recall the answer with the exact source cited.<br><br><strong>3.</strong> That's it. It gets a little smarter every time you or your AI writes to it.</td></tr>
               </table>
             </td></tr>
           </table>

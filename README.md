@@ -6,7 +6,7 @@ You explain your project to Claude. Then you explain it again to ChatGPT. Then a
 
 Callosium fixes that. It turns a folder of plain Markdown on your computer into a **brain any AI can use**: they recall what you know before answering, save what they learn in the right place, and cite exactly where every answer came from. Your files never leave your machine.
 
-- **One brain, every AI.** Claude, Cursor, ChatGPT-compatible apps, 23 clients supported, all reading and writing the same memory.
+- **One brain, every AI.** Claude, Cursor, ChatGPT-compatible apps, 27 clients supported, all reading and writing the same memory.
 - **Plain files you own.** Markdown on your disk. No database, no cloud, no account required. Uninstall tomorrow and your notes are still just notes.
 - **It does not make things up.** Across 15,000 test questions it invented nothing. When the answer is not in your notes, it says so. ([the numbers](#the-proof))
 - **Works offline, in English and Arabic.** Everyday recall needs no internet, no API key, and no large language model.

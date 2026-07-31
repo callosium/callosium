@@ -402,7 +402,14 @@ export function generateFilingRules(schema: BrainSchema, canSee?: (partitionPath
     // the mixed-content case unambiguous: any touch of a gate topic sends the
     // WHOLE note to the gated partition, no matter who it's about.
     ...(() => {
-      const gatedParts = parts.filter((p) => (p as { gated?: boolean }).gated);
+      // Derive from ALL partitions, not the canSee-filtered list. A freshly paired
+      // agent gets denyRead:["Private/"] by default, which filtered the only gated
+      // partition out of `parts` and made this whole block vanish — so the agent
+      // was told nothing about sensitive content, while every shipped prompt still
+      // ordered it to file health notes in Private/. It could not obey, so the
+      // blood test landed in an open, synced folder instead. The rule must survive
+      // the scrub; only the DESTINATION may be withheld.
+      const gatedParts = allParts.filter((p) => (p as { gated?: boolean }).gated);
       if (!gatedParts.length) return [];
       // The open (non-gated) partitions this agent can see — the folders a
       // sensitive note must NEVER land in. Derived from the already-visible list
@@ -419,8 +426,17 @@ export function generateFilingRules(schema: BrainSchema, canSee?: (partitionPath
         const gt = gateTopicsOf(gp);
         const topics = scrubDenied(gt.length ? gt.join(', ') : GATE_FALLBACK);
         const never = openPaths.length ? ` It NEVER goes in ${orList(openPaths)}, even when it also reads as everyday personal life or work.` : '';
+        // Can this agent actually WRITE there? If the gated partition is outside its
+        // scope, naming it as the destination just reproduces the original failure:
+        // the AI is ordered somewhere it will be refused, and then falls back to an
+        // open folder. When it cannot reach the destination, the rule becomes a
+        // REFUSAL — and the folder is not named, so a restricted agent still learns
+        // nothing about the brain's gated taxonomy.
+        const reachable = !canSee || canSee(gp.path);
         lines.push(
-          `If a note touches ${topics} — YOURS OR ANYONE ELSE'S (a spouse, parent, sibling, or any relative counts) — file it in **${gp.path}/** and nowhere else.${never} If a single raw source MIXES this with non-sensitive content, the WHOLE distilled note goes to ${gp.path}/ — do not split the sensitive part into an open folder.`,
+          reachable
+            ? `If a note touches ${topics} — YOURS OR ANYONE ELSE'S (a spouse, parent, sibling, or any relative counts) — file it in **${gp.path}/** and nowhere else.${never} If a single raw source MIXES this with non-sensitive content, the WHOLE distilled note goes to ${gp.path}/ — do not split the sensitive part into an open folder.`
+            : `If a note touches ${topics} — YOURS OR ANYONE ELSE'S (a spouse, parent, sibling, or any relative counts) — DO NOT FILE IT AT ALL. You do not have access to the area of this brain where it belongs. Say so plainly and let the owner file it themselves.${never} If a single raw source MIXES this with non-sensitive content, treat the WHOLE note as sensitive and do not write any of it — do not split the sensitive part out into an open folder.`,
         );
       }
       lines.push(``);

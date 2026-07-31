@@ -1259,6 +1259,24 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
           // forgery guard below still governs the whole note.)
           const incoming = content.startsWith('---') ? parseNote(target!, content) : null;
           note.body = incoming && !incoming.rawFile ? incoming.body : content;
+          // MERGE the caller's frontmatter over the note's, instead of discarding it.
+          // Discarding it made `tags: []` unrepairable through the product: the AI
+          // writes a note, brain_check flags it in the same session, the Health
+          // screen's own remedy prompt tells the AI to add the missing fields, this
+          // path answers "Updated" — and nothing changed. No other tool can do it
+          // either (append_note only appends to the body; archive_note only sets
+          // status), so the note stayed invalid forever.
+          // Identity stays server-owned: created_by/updated_by/created are dropped
+          // before the merge, so this cannot become a forgery route — the restamp
+          // below (see "agent content can never forge created_by/updated_by") is
+          // still the only writer of those.
+          if (incoming && !incoming.rawFile && incoming.frontmatter) {
+            const caller = { ...(incoming.frontmatter as Record<string, unknown>) };
+            delete caller.created_by;
+            delete caller.updated_by;
+            delete caller.created;
+            note.frontmatter = { ...note.frontmatter, ...caller };
+          }
         }
         // Attribution forgery guard: a rawFile note serializes VERBATIM and
         // skips stamping, so an agent could ship "---\n...\ncreated_by: <human>"

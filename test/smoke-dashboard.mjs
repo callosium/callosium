@@ -41,6 +41,24 @@ try {
 
   ok('/__health is exempt (200 with no token)', (await fetch(`${BASE}/__health`)).status === 200);
 
+  // Regression: a request target of `//` throws ERR_INVALID_URL out of `new URL()`.
+  // That parse used to sit OUTSIDE the handler's try, so in an async handler it
+  // became an unhandled rejection and Node exited — one unauthenticated GET took
+  // the user's whole brain offline, before any token or origin check ran. This is
+  // reachable from any page the user visits, because `//` is exactly what a browser
+  // serialises for <img src="http://127.0.0.1:PORT//">.
+  // The second assertion is the one that matters: the server must still be alive.
+  const malformed = ['//', '///', '////', '//?x=1'];
+  const codes = [];
+  for (const p of malformed) {
+    const r = await fetch(`${BASE}${p}`).catch(() => null);
+    codes.push(r ? r.status : 'no-response');
+  }
+  ok(`malformed targets ${malformed.join(' ')} answer 400 (got ${codes.join(',')})`,
+    codes.every((c) => c === 400));
+  ok('server is STILL LISTENING after malformed targets (did not crash)',
+    (await fetch(`${BASE}/__health`).catch(() => null))?.status === 200);
+
   const htmlRes = await fetch(`${BASE}/`);
   const html = await htmlRes.text();
   ok('/ serves the SPA HTML (200, no token needed)', htmlRes.status === 200 && /CALLOSIUM|callosium/i.test(html));

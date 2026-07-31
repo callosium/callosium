@@ -82,6 +82,17 @@ function protectedSpans(text: string): [number, number][] {
   for (const m of text.matchAll(PAT)) {
     spans.push([m.index!, m.index! + m[0].length]);
   }
+  // The YAML frontmatter block, whole. A wikilink is prose syntax; inside YAML it
+  // is data corruption, and silent: `client: Acme Corp` becomes
+  // `client: [[Acme Corp]]`, which YAML then reads as a nested array rather than a
+  // string, and `aliases: [Acme Corp, AC]` loses "AC" entirely and poisons the
+  // gazetteer. In the worst case the block stops parsing at all, after which
+  // append_note and archive_note hard-refuse the note.
+  // Same bounds idiom as recall/engine.ts and core/aliases.ts.
+  if (text.startsWith('---')) {
+    const fmEnd = text.indexOf('\n---', 3);
+    if (fmEnd > 0) spans.push([0, fmEnd + 4]);
+  }
   return spans;
 }
 

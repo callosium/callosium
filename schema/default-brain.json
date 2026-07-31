@@ -94,7 +94,7 @@
   ],
 
   "standingRules": [
-    { "match": "credentials or API keys", "destination": "the designated keys file", "note": "configurable; storing plaintext is the owner's explicit choice" },
+    { "match": "credentials, API keys, tokens, passwords or connection strings", "destination": "DO NOT STORE — refuse and tell the owner", "note": "Never write a secret into the brain, even if asked. Say plainly that it belongs in a password manager, and record only the reference: the service name and which account it is for, never the value. Notes are plain files in a folder that is usually synced, and the local version history keeps every past copy of every note — so a key pasted once cannot reliably be un-published afterwards." },
     { "match": "person worth remembering", "destination": "People/ or Work/People/" },
     { "match": "capture with no obvious home", "destination": "Inbox/" },
     { "match": "finished workstream", "destination": "Milestones/ with completed: date" }

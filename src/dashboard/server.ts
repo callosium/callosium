@@ -2035,7 +2035,14 @@ async function handleInit(res: http.ServerResponse, body: Json) {
     // schema: copy the packaged default unless the folder already has one
     if (!vault.exists('System/brain.json')) {
       const def = await fs.readFile(path.join(HERE, '..', '..', 'schema', 'default-brain.json'), 'utf8');
-      await vault.writeFile('System/brain.json', def);
+      // Mark it as the untouched packaged default. loadSchema reads this back and
+      // keeps `source: 'default'`, which keeps strict validation OFF — otherwise
+      // adopting an existing vault immediately reports every note in it as
+      // malformed, on the path we describe as leaving the user's files alone.
+      // Editing the file (removing or changing this line) opts into strict.
+      const seeded = JSON.parse(def) as Record<string, unknown>;
+      seeded.derivedFrom = 'packaged-default';
+      await vault.writeFile('System/brain.json', `${JSON.stringify(seeded, null, 2)}\n`);
     }
     // scaffold the core partition folders — collect (don't swallow) failures so
     // the onboarding UI can warn instead of silently claiming all were created.
@@ -2172,7 +2179,20 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
 
   const server = http.createServer(async (req, res) => {
     wrapCompression(req, res);
-    const url = new URL(req.url || '/', `http://localhost:${port}`);
+    // Parse the target INSIDE a guard. `new URL('//', base)` throws ERR_INVALID_URL,
+    // and from an async handler that surfaces as an unhandled rejection which takes
+    // the whole process down — the user's brain goes offline from a single
+    // unauthenticated GET, before any token or origin check runs.
+    // `//` is not exotic: it is exactly what a browser serialises as the request
+    // target for <img src="http://127.0.0.1:PORT//">, so any page the user visits
+    // could stop their brain. Confirmed crashing targets: // /// //// //?x=1 //#f
+    let url: URL;
+    try {
+      url = new URL(req.url || '/', `http://localhost:${port}`);
+    } catch {
+      res.writeHead(400, { 'content-type': 'text/plain', 'cache-control': 'no-store' });
+      return res.end('bad request');
+    }
     try {
       // Desktop shell handshake: the native Tauri app passes a per-launch token via env and probes
       // this endpoint to confirm THIS process — not some other listener that grabbed the (now
@@ -2287,6 +2307,20 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
   // listen() only fires its callback on success; a bind failure (EADDRINUSE)
   // emits an 'error' event instead — unhandled, Node would crash with a stack
   // trace. Catch it and fail with a friendly message.
+  // A malformed request line never reaches the handler above — Node emits
+  // 'clientError' instead, and the default action destroys the socket. Answer 400
+  // and stay up.
+  server.on('clientError', (_err, socket) => {
+    if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n');
+    else socket.destroy();
+  });
+  // Last line of defence. This process IS the user's brain — the desktop shell does
+  // not restart it, it shows "Callosium's local server stopped unexpectedly". A stray
+  // rejection anywhere in a request path must be logged and survived, never fatal.
+  process.on('unhandledRejection', (reason) => {
+    console.error('callosium: unhandled rejection (server kept alive) —', reason);
+  });
+
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, '127.0.0.1', () => {

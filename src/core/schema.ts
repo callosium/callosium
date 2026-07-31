@@ -40,7 +40,18 @@ export async function loadSchema(vault: Vault): Promise<{ schema: BrainSchema; s
       // validateSchema — that must degrade to the default like a JSON typo does,
       // NOT crash MCP/dashboard/CLI startup at their unguarded call sites.
       try {
-        return { schema: validateSchema(parsed), source: 'brain' };
+        const schema = validateSchema(parsed);
+        // An UNEDITED copy of the packaged default is not an owner's decision, so it
+        // must not turn strict validation on. `init` stamps derivedFrom when it seeds
+        // System/brain.json; without this, adopting an existing vault flipped
+        // source->'brain' -> strict=true at check.ts and every pre-existing note was
+        // reported malformed (~3 findings per note; ~3,600 on a 1,200-note vault) on
+        // the very path the README describes as leaving your files untouched.
+        // The moment the owner edits the file they remove/ignore the marker and get
+        // strict checking, which is the point at which they have actually chosen it.
+        const derived = (parsed as { derivedFrom?: unknown }).derivedFrom;
+        if (derived === 'packaged-default') return { schema, source: 'default' };
+        return { schema, source: 'brain' };
       } catch (e) {
         console.warn(`[callosium] ${SCHEMA_IN_BRAIN} isn't a valid brain schema (${(e as Error).message}); using the default until you fix it.`);
       }

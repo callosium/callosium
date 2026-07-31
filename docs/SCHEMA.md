@@ -90,7 +90,7 @@ Run on every document before saving. This is the deterministic heart of the fili
 3. **Is it AI-generated?**
    → Mark it clearly, keep it separable from the owner's writing.
 
-Plus the standing rules: credentials go to the designated keys file, people to `People/`, captures with no obvious home to `Inbox/`.
+Plus the standing rules: secrets (API keys, tokens, passwords) are never stored — the AI refuses and points the owner at their password manager — people go to `People/`, captures with no obvious home to `Inbox/`.
 
 ## The ground-truth protocol
 

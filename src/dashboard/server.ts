@@ -927,11 +927,28 @@ async function handleIngest(req: http.IncomingMessage, res: http.ServerResponse,
 function mcpClientConfig(vaultRoot: string, id: string, token: string) {
   const args = ['mcp', '--brain', vaultRoot, '--agent', id, '--token', token];
   const modelDir = process.env.CALLOSIUM_MODEL_DIR;
-  const script = process.argv[1];
-  if (modelDir && script && script.endsWith('cli.js')) {
+  // Resolve OUR OWN location, not process.argv[1]. Two reasons the old guard failed:
+  //   1. `argv[1].endsWith('cli.js')` is FALSE on macOS/Linux — npm symlinks the bin
+  //      and Node does not realpath argv[1] — so the branch silently no-opped on
+  //      exactly the platforms it existed to serve, and they got the bare command.
+  //   2. The bare `callosium` command does not work either. The MCP SDK spawns with
+  //      shell:false; measured on Windows with callosium globally installed and on
+  //      PATH: spawn('callosium') -> ENOENT, spawn('callosium.cmd') -> EINVAL.
+  // So emit the running interpreter plus an ABSOLUTE script path, unconditionally —
+  // no platform branch, because there is nothing platform-specific about it.
+  const cliPath = path.join(HERE, '..', 'cli.js');
+  // npx installs into a temp cache that is deleted after the run, so handing that
+  // path to a client would write a config that breaks as soon as npx cleans up.
+  // Fall back to the bare command there and let the install guidance cover it.
+  const ephemeral = /[\\/]_npx[\\/]/.test(cliPath);
+  if (!ephemeral) {
     return {
       mcpServers: {
-        callosium: { command: process.execPath, args: [script, ...args], env: { CALLOSIUM_MODEL_DIR: modelDir } },
+        callosium: {
+          command: process.execPath,
+          args: [cliPath, ...args],
+          ...(modelDir ? { env: { CALLOSIUM_MODEL_DIR: modelDir } } : {}),
+        },
       },
     };
   }

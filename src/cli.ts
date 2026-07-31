@@ -16,7 +16,30 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { fileURLToPath } from 'node:url';
 import { Vault } from './core/vault.ts';
+
+// How an MCP client should LAUNCH us. Never the bare `callosium` command: the MCP
+// SDK spawns with shell:false, and measured on Windows with callosium globally
+// installed and on PATH, spawn('callosium') is ENOENT and spawn('callosium.cmd')
+// is EINVAL. Resolve our OWN module path — not process.argv[1], because npm
+// symlinks the bin on macOS/Linux and Node does not realpath argv[1], so any
+// argv[1] test is false on exactly the platforms it exists to help. Hand back the
+// running interpreter plus an absolute script path. No platform branch: there is
+// nothing platform-specific about it. npx installs into a temp cache that is
+// deleted after the run, so a config pointing there would break — fall back to
+// the bare command in that one case.
+function mcpLaunch(args: string[]): { command: string; args: string[]; env?: Record<string, string> } {
+  const cliPath = fileURLToPath(import.meta.url);
+  if (/[\\/]_npx[\\/]/.test(cliPath)) return { command: 'callosium', args };
+  const modelDir = process.env.CALLOSIUM_MODEL_DIR;
+  return {
+    command: process.execPath,
+    args: [cliPath, ...args],
+    ...(modelDir ? { env: { CALLOSIUM_MODEL_DIR: modelDir } } : {}),
+  };
+}
+
 import { loadSchema, SCHEMA_IN_BRAIN } from './core/schema.ts';
 import { generateMap, generateFilingRules, writeMap, MAP_REL } from './structure/map.ts';
 import { serializeNote, isoDate } from './core/frontmatter.ts';
@@ -243,10 +266,7 @@ async function main() {
         JSON.stringify(
           {
             mcpServers: {
-              callosium: {
-                command: 'callosium',
-                args: ['mcp', '--brain', vault.root, '--agent', agent.id, '--token', agent.token],
-              },
+              callosium: mcpLaunch(['mcp', '--brain', vault.root, '--agent', agent.id, '--token', agent.token]),
             },
           },
           null,
@@ -268,10 +288,7 @@ async function main() {
         JSON.stringify(
           {
             mcpServers: {
-              callosium: {
-                command: 'callosium',
-                args: ['mcp', '--brain', vault.root, '--agent', agent.id, '--token', agent.token],
-              },
+              callosium: mcpLaunch(['mcp', '--brain', vault.root, '--agent', agent.id, '--token', agent.token]),
             },
           },
           null,

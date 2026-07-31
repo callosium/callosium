@@ -1285,14 +1285,14 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
         const seedTags = Array.isArray(tags)
           ? [...new Set(tags.map((t) => String(t).trim().toLowerCase()).filter(Boolean))]
           : [];
-        // BL-8 part 3 (refuse an untagged create) was implemented here and REVERTED:
-        // it broke 5 existing tests. A hard throw is the wrong instrument — plenty of
-        // legitimate callers create a note and set frontmatter afterwards, and turning
-        // that into an error three days before launch trades a cosmetic health finding
-        // for a broken write path. Parts 1 and 2 already solve the real problem: tags
-        // CAN now be supplied on create, and an existing `tags: []` CAN now be repaired.
-        // The right shape for part 3 is a soft signal in the response (or a nudge in the
-        // agent rules), not a refusal — post-launch, with the tests updated deliberately.
+        // BL-8 part 3 does NOT refuse here. A hard throw was implemented at this spot
+        // and reverted: it broke 5 tests, because legitimate callers create a note and
+        // set frontmatter in a second step, and turning that into an error trades a
+        // cosmetic health finding for a broken write path. The signal lives at the end
+        // of this handler instead (search TAGS MISSING) — the write succeeds and the
+        // agent is told to add tags in the same turn, the same way the link and map
+        // nudges work. Parts 1 and 2 supply the mechanism: tags CAN be passed on
+        // create, and an existing `tags: []` CAN be repaired.
         const seedTagLine = seedTags.length ? `tags: [${seedTags.join(', ')}]` : 'tags: []';
         const note = existing ?? parseNote(target!, content.startsWith('---') ? content : `---\ntype: ${safeType}\n${seedTagLine}\nstatus: active\nupdated: ${isoDate()}\n---\n\n${content}`);
         if (existing) {
@@ -1405,6 +1405,18 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
           /* best-effort: get_map is always live regardless of the persisted file */
         }
       }
+      // BL-8 part 3, delivered as a NUDGE rather than a refusal. An empty `tags: []`
+      // fails the brain's own health check exactly like a missing field, and leaves
+      // the note unfindable by topic. Refusing the write was implemented and reverted
+      // (it broke 5 tests, and legitimate callers do set frontmatter in a second
+      // step), so this rides the same channel as the link and map nudges above: the
+      // write succeeds, and the agent is told to finish the job in the same turn.
+      const wroteTags = Array.isArray(note.frontmatter.tags)
+        ? (note.frontmatter.tags as unknown[]).filter((x) => String(x ?? '').trim())
+        : [];
+      const tagHint = wroteTags.length
+        ? ''
+        : `\nTAGS MISSING (fix it THIS turn) — this note saved with an empty tags list, which fails the brain's health check and makes it unfindable by topic. Call write_note again with tags: [...] — 3-6 lowercase topic words a future search would actually use.`;
       return {
         content: [
           {
@@ -1414,6 +1426,7 @@ async function buildServer(vault: Vault, agent: AgentIdentity, schema: BrainSche
               (suggestions.length
                 ? `\nLINK SUGGESTIONS — these known entities are mentioned but not [[linked]]; update the note to link them: ${suggestions.map((s) => `[[${s}]]`).join(', ')}`
                 : '') +
+              tagHint +
               structureHint,
           },
         ],

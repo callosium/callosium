@@ -626,15 +626,33 @@ async function ob_doSignup(provider){
     if(hasBrain()) enterApp(); else ob_nav('choice');
   }catch(e){ state.ob_err='couldn’t continue — the engine didn’t answer.'; renderOnboard(state.onboardPhase); }
 }
-// OAuth sign-in via Supabase. Redirects away, returns to this origin, and the
-// session is completed on the next onboarding render (ob_checkSupabaseSession).
+// OAuth sign-in via Supabase. `skipBrowserRedirect` keeps the provider's page
+// OUT of this window: on desktop this is the trusted Tauri webview, and
+// navigating it to accounts.google.com both hands a third party our privileged
+// surface and gets refused anyway — Google blocks embedded webviews outright
+// with `disallowed_useragent`. So we take the URL and hand it to the real
+// browser through tauri-plugin-opener (ob_ext), which falls back to a normal
+// window.open when we are already in a browser tab.
+//
+// Known limitation, deliberate for now: the provider redirects back to this
+// origin, so in the desktop app the session lands in the SYSTEM browser's copy
+// of the dashboard, not in the Tauri webview — different webview, different
+// storage. That tab is the same dashboard on the same local server, so the user
+// is genuinely signed in there. Completing it back inside the app needs a
+// loopback/deep-link handler, which is post-launch work: an account is only for
+// sync and paid plans, and neither ships before September. "Continue as guest"
+// remains the full-product path.
 async function ob_oauth(provider){
   const sb = await sbEnsure(); // loads the Supabase UMD on this first auth use
   if(!sb){ state.ob_err='sign-in is offline right now — check your connection, or continue as guest.'; renderOnboard(state.onboardPhase); return; }
   state.ob_err=null; state.ob_authMsg=null;
   try{
-    const { error } = await sb.auth.signInWithOAuth({ provider, options:{ redirectTo: window.location.origin } });
-    if(error){ state.ob_err = /not enabled/i.test(error.message) ? (provider+' sign-in isn’t enabled on the server yet — use email, or continue as guest.') : error.message; renderOnboard(state.onboardPhase); }
+    const { data, error } = await sb.auth.signInWithOAuth({ provider, options:{ redirectTo: window.location.origin, skipBrowserRedirect: true } });
+    if(error){ state.ob_err = /not enabled/i.test(error.message) ? (provider+' sign-in isn’t enabled on the server yet — use email, or continue as guest.') : error.message; renderOnboard(state.onboardPhase); return; }
+    if(!data || !data.url){ state.ob_err='couldn’t start sign-in — try again, or continue as guest.'; renderOnboard(state.onboardPhase); return; }
+    ob_ext(data.url);
+    state.ob_authMsg='continue in your browser — we opened '+provider+' sign-in there.';
+    renderOnboard(state.onboardPhase);
   }catch(e){ state.ob_err='couldn’t start sign-in — try again, or continue as guest.'; renderOnboard(state.onboardPhase); }
 }
 // Email + password: try to sign in (returning user), else sign up (new user).

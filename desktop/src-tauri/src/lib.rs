@@ -177,8 +177,11 @@ fn bind_child_lifetime(child: &std::process::Child) {
 /// The Linux answer would be prctl(PR_SET_PDEATHSIG) — but prctl applies to the CALLING process, so
 /// it has to be armed inside the child via a pre_exec hook before exec, not from the parent after
 /// spawn. macOS has no PDEATHSIG at all and needs a kqueue watcher on the parent pid. Both are real
-/// work, and the shipped installers are Windows and macOS; doing the Windows job object properly and
-/// being honest about the other two beats a plausible-looking call that silently protects nothing.
+/// work, and the ONLY shipped installer is Windows (`bundle.targets: ["nsis"]`, and desktop.yml is a
+/// single windows-latest job) — Mac and Linux users install from npm and never run this shell at all.
+/// Doing the Windows job object properly and being honest about the other two beats a
+/// plausible-looking call that silently protects nothing. If a macOS bundle is ever added, this
+/// no-op becomes a real leak — a ~100 MB Node server outliving the app — and must be closed first.
 /// Until then, tray Quit and ExitRequested remain the only cleanup paths on those platforms.
 #[cfg(not(windows))]
 fn bind_child_lifetime(_child: &std::process::Child) {}

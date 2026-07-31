@@ -73,7 +73,9 @@ function persistBrain(p: string | null): void {
     /* best-effort */
   }
 }
-function loadPersistedBrain(): string | null {
+// Exported so `callosium mcp --http` can reach for the SAME remembered brain the
+// dashboard uses, instead of falling back to the shell's cwd (BL-11).
+export function loadPersistedBrain(): string | null {
   try {
     const c = JSON.parse(readFileSync(CONFIG_FILE, 'utf8')) as { brainPath?: unknown };
     return typeof c.brainPath === 'string' && c.brainPath ? c.brainPath : null;
@@ -924,7 +926,9 @@ async function handleIngest(req: http.IncomingMessage, res: http.ServerResponse,
 // bare `callosium` command fails with "command not found", so detect the bundle
 // (it sets CALLOSIUM_MODEL_DIR and runs cli.js) and emit the bundled node + the
 // script path plus the model-dir env instead, which works everywhere.
-function mcpClientConfig(vaultRoot: string, id: string, token: string) {
+// Exported for test/unit-pairconfig.mjs, which pins the BL-1 invariant: this must
+// never hand a client the bare `callosium` command.
+export function mcpClientConfig(vaultRoot: string, id: string, token: string) {
   const args = ['mcp', '--brain', vaultRoot, '--agent', id, '--token', token];
   const modelDir = process.env.CALLOSIUM_MODEL_DIR;
   // Resolve OUR OWN location, not process.argv[1]. Two reasons the old guard failed:

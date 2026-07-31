@@ -50,7 +50,7 @@ import { brainCheck } from './check/check.ts';
 import { routeNote } from './filing/engine.ts';
 import { pairAgent, rotateAgentToken } from './mcp/agents.ts';
 import { serve, serveHttp } from './mcp/server.ts';
-import { serveDashboard } from './dashboard/server.ts';
+import { serveDashboard, loadPersistedBrain } from './dashboard/server.ts';
 
 const argv = process.argv.slice(2);
 const cmd = argv[0];
@@ -304,7 +304,37 @@ async function main() {
       if (argv.includes('--http')) {
         const p = flag('port') ? Number(flag('port')) : undefined;
         if (p !== undefined && (!Number.isInteger(p) || p < 1 || p > 65535)) throw new Error('--port must be an integer between 1 and 65535');
-        await serveHttp({ brainPath: brainPath(), port: p });
+        // With no --brain, serve the brain the dashboard last connected — NOT the
+        // shell's cwd. brainPath() ends in process.cwd(), so running this one
+        // directory up from the brain served a folder that isn't one, and the
+        // endpoint then rejected a VALID token with "bad token": the agent registry
+        // it authenticates against lives inside the real brain. Measured: same
+        // token, same command, one directory up -> 401; inside the brain -> 200.
+        const stated = flag('brain') || process.env.CALLOSIUM_BRAIN;
+        const chosen = path.resolve(stated || loadPersistedBrain() || process.cwd());
+        const st = await fs.stat(chosen).catch(() => null);
+        if (!st || !st.isDirectory()) {
+          throw new Error(
+            `No brain at ${chosen} — pass --brain <path>, or run 'callosium serve' once so the brain is remembered.`,
+          );
+        }
+        try {
+          await serveHttp({ brainPath: chosen, port: p });
+        } catch (e) {
+          // The bare "EADDRINUSE" stack read as a crash. In practice it almost
+          // always means the endpoint is ALREADY up: the dashboard auto-starts it
+          // on :4321, so an owner who has `callosium serve` open does not need
+          // this command at all.
+          if ((e as NodeJS.ErrnoException)?.code === 'EADDRINUSE') {
+            throw new Error(
+              `Port ${p ?? 4321} is already in use — the MCP endpoint is most likely already running.\n` +
+                `The dashboard starts it for you, so if 'callosium serve' is open, point your client at ` +
+                `http://127.0.0.1:${p ?? 4321}/mcp and you are done.\n` +
+                `To run a second, separate endpoint: callosium mcp --http --port <other port>`,
+            );
+          }
+          throw e;
+        }
         await new Promise(() => {}); // keep the HTTP server alive
         break;
       }

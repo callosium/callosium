@@ -271,6 +271,16 @@ export async function embedTexts(texts: string[], kind: 'query' | 'passage'): Pr
         // 1400 + heading/kind prefixes fit comfortably). The old 1500 cut the tail
         // off fully-loaded chunks, violating the no-truncation invariant.
         const batch = texts.slice(i, i + BATCH).map((t) => `${kind}: ${t.slice(0, 2000)}`);
+        // Hand libuv's I/O phase a turn BEFORE each batch. transformers.js does
+        // tokenization, mean-pooling and normalization as synchronous JS on this
+        // thread, so a batch is ~0.9s of solid block on a CPU-only machine — and
+        // `await` on an already-resolved value only drains microtasks, which does
+        // not let a queued socket run. Measured on a real 10,786-chunk brain: the
+        // server got a turn about once a second, /api/account (a 160-byte read)
+        // took 5.4s, and /api/overview — which needs THOUSANDS of turns — never
+        // answered at all for the full 10 minutes. This does not make the build
+        // faster; it makes the server reachable while it runs.
+        await new Promise<void>((resolve) => setImmediate(resolve));
         const res: any = await withTimeout(ex(batch, { pooling: 'mean', normalize: true }), INFER_TIMEOUT, 'embedding batch');
         // A marginal GPU can return NaN/Inf rows WITHOUT throwing (the load probe
         // only checks a single batch-1 vector). Unvalidated, those poison every
@@ -564,6 +574,10 @@ export async function buildEmbeddings(
   }
 
   const newVecs: Float32Array[] = [];
+  // Stays at 64: embedTexts re-batches internally (16 on CPU, 64 on GPU), so this
+  // number governs ONNX throughput, NOT how long the server is blocked. Shrinking
+  // it here only makes the inference less efficient. The event-loop yield that
+  // actually matters lives in embedTexts' inner loop, at the real batch boundary.
   const BATCH = 64;
   for (let i = 0; i < chunkTexts.length; i += BATCH) {
     newVecs.push(...(await embedTexts(chunkTexts.slice(i, i + BATCH), 'passage')));

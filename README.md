@@ -93,14 +93,27 @@ Local-only, per-AI permissions, signed writes, always-cite, never-invent, biling
 
 **Prerequisite:** [Node.js](https://nodejs.org) 20 or newer. Check with `node --version`.
 
-### 1. Create a brain and open the dashboard
+### 1. Install it, then run one word
 
 ```bash
-npx callosium init my-brain
-npx callosium serve --brain my-brain
+npm install -g callosium
 ```
 
-`init` scaffolds a brain (or adopts an existing Obsidian vault or folder of Markdown, your files are never reformatted). `serve` opens the local dashboard at **http://localhost:4319**.
+```bash
+callosium
+```
+
+That is the whole setup. `callosium` on its own opens the dashboard at **http://localhost:4319** and opens your browser for you. You do not create anything up front — the onboarding asks what you already have and takes it from there, whether that is an Obsidian vault, a folder of Markdown, a pile of raw exports, or nothing at all. Your files are never reformatted.
+
+Just want to look without installing anything?
+
+```bash
+npx callosium
+```
+
+Same dashboard, and it installs nothing on your machine — that is what `npx` is for. Either way your notes stay in the folder you choose, and the language model and settings live in `~/.callosium`, so nothing is re-downloaded or lost between runs.
+
+> Prefer to make the folder yourself first? `callosium init my-brain` scaffolds one (or adopts an existing vault), and `callosium serve --brain my-brain` opens that specific brain. Neither is required.
 
 > **First run downloads the language model** (about 120MB, one time) so meaning-based search works in English and Arabic. Fully offline after that. No internet on first run? Everything still works: keyword recall needs no model, and the smarter search switches itself on once the model is in place.
 

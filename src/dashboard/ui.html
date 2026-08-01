@@ -319,6 +319,10 @@ const httpResult = async r => {
   return r.ok ? o : Object.assign(o, { error: o.error || ('request failed (' + r.status + ')'), httpStatus: r.status });
 };
 const api = p => fetch(p,{headers:{'x-callosium-token':CCT}}).then(httpResult);
+// Same as api(), but BOUNDED. For requests where a genuine multi-minute stall is
+// possible and an unbounded await would strand the whole boot. Rejects on timeout,
+// so callers land in their existing catch rather than waiting forever.
+const apiTimeout = (p,ms) => fetch(p,{headers:{'x-callosium-token':CCT},signal:AbortSignal.timeout(ms)}).then(httpResult);
 const post = (p,b) => fetch(p,{method:'POST',headers:{'content-type':'application/json','x-callosium-token':CCT},body:JSON.stringify(b||{})}).then(httpResult);
 
 // ── a11y: one polite live region for the whole app (#srLive in the shell) ──
@@ -653,7 +657,15 @@ function callosiumGuideWire(root, spec, rerender){
 // ── data ──
 async function loadOverview(){
   try{
-    const o = await api('/api/overview');
+    // BOUNDED. /api/overview is the heaviest endpoint (loadAll + a full brain
+    // check) and it needs thousands of event-loop turns, so while a first-run
+    // embedding build holds the thread it cannot complete AT ALL — measured: it
+    // was still unanswered at 120s of a 611s build, while /api/embed/status
+    // stayed instant. boot() awaited this one unbounded fetch with no retry, so
+    // the cockpit sat on "connecting to your brain…" for the entire build. Time
+    // out instead: overviewFailed sends boot to a screen that can explain itself,
+    // and startEmbedPoll (already running by now) fills it with live progress.
+    const o = await apiTimeout('/api/overview', 15000);
     // A failed request is NOT "this user has no brain yet". Without this, a 500 read as
     // onboarded=false and boot() restarted onboarding for a set-up user.
     if(o && o.httpStatus){ state.overviewFailed = true; return; }
@@ -7274,6 +7286,33 @@ function renderIndexBanner(){
 // leaves 'building'. Guarded by a flag so repeated starts (boot re-entry, every
 // re-index) never stack intervals. Re-callable: after it self-clears on done/error,
 // a later re-index starts a fresh poll.
+// The boot placeholder, upgraded from a bare "connecting…" to a live account of
+// the first-run build. This is the screen a brand-new user stares at for as long
+// as their brain takes to index — on a big vault that is tens of minutes — so it
+// must never be a silent spinner. It also states the thing that makes the wait
+// bearable: keyword search already works, this is only adding meaning.
+function showBootProgress(r){
+  const el = document.getElementById('screen'); if(!el || !r || r.status!=='building') return;
+  const frac = r.phase==='model'
+    ? (r.modelPct!=null ? r.modelPct/100 : 0)
+    : (r.total ? r.done/r.total : 0);
+  const pct = Math.max(0, Math.min(100, Math.round(frac*100)));
+  const line = r.phase==='model'
+    ? t('downloading the language model','نُنزّل نموذج اللغة')
+    : t('learning what your notes mean','نتعلّم معنى ملاحظاتك');
+  const detail = r.phase==='model'
+    ? pct+'%'
+    : (r.total ? (r.done||0).toLocaleString('en-US')+' / '+r.total.toLocaleString('en-US')+' · '+pct+'%' : '');
+  el.innerHTML =
+    '<div style="font-family:var(--mono);color:var(--faint);padding:20px;line-height:1.7">'
+    + '<div>'+line+(detail?' · '+detail:'')+'</div>'
+    + '<div style="margin-top:10px;height:4px;background:rgba(127,127,127,.22);border-radius:2px;overflow:hidden;max-width:340px">'
+    + '<div style="height:100%;width:'+pct+'%;background:var(--acid);transition:width .4s"></div></div>'
+    + '<div style="margin-top:12px;font-size:12px">'
+    + t('your notes are already searchable by keyword — this only adds meaning-based search',
+        'ملاحظاتك قابلة للبحث بالكلمات بالفعل — هذا يضيف البحث بالمعنى فقط')
+    + '</div></div>';
+}
 let embedPollOn = false;
 function startEmbedPoll(){
   if(embedPollOn) return; embedPollOn = true;
@@ -7283,6 +7322,10 @@ function startEmbedPoll(){
     if(r && r.httpStatus){ return; }                                     // server said no — keep polling
     state.embed = r;
     if(r.status==='done') state.semanticError = null; // a successful build clears any prior load-error banner
+    // Before the cockpit has rendered, the boot placeholder is the ONLY thing on
+    // screen and boot is still awaiting /api/overview. Report there too, or a
+    // legitimate half-hour of first-run work is indistinguishable from a hang.
+    if(!state.overview) showBootProgress(r);
     renderIndexBanner();
     if(r.status!=='building'){
       clearInterval(iv); embedPollOn = false;
@@ -7291,6 +7334,11 @@ function startEmbedPoll(){
       // existing cache reports 'idle', not 'done', so this never fires spuriously.
       if(r.status==='done'){
         state.embedJustDone = true; renderIndexBanner();          // flip to the green "✓ ready" state
+        // If boot gave up on a timed-out overview, the cockpit was never built —
+        // the user is looking at the progress screen. Re-enter boot() so it comes
+        // up by itself, rather than leaving them at a finished bar wondering
+        // whether to reload.
+        if(!state.overview){ try{ await boot(); }catch(_){} return; }
         try{ await loadOverview(); if(state.screen==='overview' && $('#onboard').style.display==='none') render(); }catch(_){}
         setTimeout(()=>{ state.embedJustDone = false; renderIndexBanner(); }, 4200); // then retire it
       }
@@ -7385,11 +7433,24 @@ async function boot(){
     try{ if(await ob_checkSupabaseSession()) return; }catch(_){}
     try{ await loadAccount(); }catch(_){}
   }
+  // Start the embed poll BEFORE awaiting the overview, never after. On a cold
+  // brain /api/overview waits on the same thread the embedding build is holding,
+  // so it can take tens of minutes — and startEmbedPoll used to sit AFTER this
+  // await. The one indicator that could have explained the wait was gated behind
+  // the very request the work was blocking, so a first-run user got
+  // "connecting to your brain…" and no number, for the entire build.
+  startEmbedPoll();
   await loadOverview(); await loadActivity();
   // gate: distinguish "genuinely no account" from "couldn't reach the engine".
   // A transient account OR overview failure must offer a retry — never re-onboard
   // an already-set-up user just because a request blipped on load.
   if(!state.account){ if(state.accountFailed){ showRetry(); return; } showOnboard('welcome'); return; }
+  // A first-run build makes /api/overview time out LEGITIMATELY — the engine is
+  // not unreachable, it is busy, and it will finish. showRetry() would call that
+  // a failure, and falling through to showOnboard('setup') would re-onboard an
+  // already-set-up user and offer to pick a brain they already have. Show the
+  // live build instead; the poll re-enters boot() the moment it completes.
+  if(state.overviewFailed && state.embed && state.embed.status==='building'){ showBootProgress(state.embed); return; }
   if(!hasBrain()){ if(state.overviewFailed){ showRetry(); return; } showOnboard('setup'); return; }
   render();
   startLiveRefresh();

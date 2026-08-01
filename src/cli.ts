@@ -53,7 +53,51 @@ import { serve, serveHttp } from './mcp/server.ts';
 import { serveDashboard, loadPersistedBrain } from './dashboard/server.ts';
 
 const argv = process.argv.slice(2);
-const cmd = argv[0];
+
+// The command WORD, or undefined when there isn't one. `callosium --port 4400`
+// has no command — it is configuring the default action — but argv[0] is
+// '--port', which would otherwise be reported as an unknown command. Anything
+// leading with a dash that isn't --version/--help means "no command given".
+const RAW_CMD = argv[0];
+const IS_META = RAW_CMD === '--version' || RAW_CMD === '-v' || RAW_CMD === '--help' || RAW_CMD === '-h';
+const cmd =
+  RAW_CMD === undefined || (!IS_META && RAW_CMD.startsWith('-')) ? undefined : RAW_CMD;
+
+// How we were invoked. `npx callosium` runs this file out of npm's _npx cache
+// and installs NOTHING on PATH — that is what npx is FOR — so a help screen
+// that says `callosium serve` hands the reader a command their shell rejects.
+// Print the form that will actually work for them.
+const VIA_NPX =
+  /[\\/]_npx[\\/]/.test(process.argv[1] ?? '') || process.env.npm_command === 'exec';
+const CMD = VIA_NPX ? 'npx callosium' : 'callosium';
+
+function printHelp(): void {
+  const rows: [string, string][] = [
+    ['init [path]', 'scaffold or adopt a brain'],
+    ['serve [--brain p] [--port n]', 'open the dashboard (the cockpit)'],
+    ['recall "question" [--brain p]', 'deterministic recall with evidence'],
+    ['map [--brain p] [--write]', "the brain's routing map (how it's organized)"],
+    ['rules [--brain p]', 'the filing rules (where new notes go)'],
+    ['check [--brain p] [--verbose]', 'audit the brain (report only)'],
+    ['pair <id> <name> [--brain p]', 'register an agent + print client config'],
+    ['rotate <id> [--brain p]', 'issue a fresh token for an agent (revokes the old)'],
+    ['mcp --agent <id> --token <t>', 'serve over MCP (stdio; add --http for HTTP)'],
+    ['remember "text" --title "Topic"', 'store a memory record'],
+    ['--version', 'print the version'],
+  ];
+  const left = rows.map(([usage]) => `${CMD} ${usage}`);
+  const width = Math.max(...left.map((s) => s.length));
+  console.log(
+    [
+      'callosium — one brain, every AI, your files.',
+      '',
+      `  Just want it open? Run it with no arguments:  ${CMD}`,
+      '  It opens the dashboard and walks you through setting up your brain.',
+      '',
+      ...rows.map(([, desc], i) => `  ${left[i].padEnd(width)}  ${desc}`),
+    ].join('\n'),
+  );
+}
 
 // Known flags and whether each takes a following value. Anything else that
 // merely starts with "--" is ordinary free text (e.g. "we discussed --pricing
@@ -115,6 +159,16 @@ async function main() {
       break;
     }
 
+    // No command at all opens the dashboard. This used to print the help menu,
+    // which was the worst thirty seconds in the product: `npx callosium` fetches
+    // the package, runs it, prints a list of `callosium <thing>` commands and
+    // leaves NOTHING on PATH — because not installing is what npx is FOR — so
+    // every command in that menu answers "command not found". Nothing about the
+    // help was reachable advice. Opening the dashboard is: it already handles a
+    // machine with no brain by falling through to onboarding, which is where the
+    // "what do you have?" question belongs, and it auto-opens the browser. One
+    // word is the whole install.
+    case undefined:
     case 'serve':
     case 'dashboard': {
       const brainArg = flag('brain');
@@ -374,24 +428,18 @@ async function main() {
       break;
     }
 
+    case '--help':
+    case '-h':
+      printHelp();
+      break;
+
     default:
-      console.log(
-        [
-          'callosium — one brain, every AI, your files.',
-          '',
-          '  callosium init [path]                      scaffold or adopt a brain',
-          '  callosium serve [--brain p] [--port n]     open the dashboard (the cockpit)',
-          '  callosium recall "question" [--brain p]    deterministic recall with evidence',
-          '  callosium map [--brain p] [--write]        the brain\'s routing map (how it\'s organized)',
-          '  callosium rules [--brain p]                the filing rules (where new notes go)',
-          '  callosium check [--brain p] [--verbose]    audit the brain (report only)',
-          '  callosium pair <id> <name> [--brain p]     register an agent + print client config',
-          '  callosium rotate <id> [--brain p]          issue a fresh token for an agent (revokes the old)',
-          '  callosium mcp --agent <id> --token <t>     serve over MCP (stdio; add --http for HTTP)',
-          '  callosium remember "text" --title "Topic"  store a memory record',
-          '  callosium --version',
-        ].join('\n'),
-      );
+      // An unrecognised command used to fall in here and print the help at exit
+      // 0, so a typo was indistinguishable from asking for help — to a reader
+      // and to any script checking the status. Name it, then help, then fail.
+      console.error(`callosium: unknown command '${cmd}'\n`);
+      printHelp();
+      process.exitCode = 1;
   }
 }
 

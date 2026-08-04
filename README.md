@@ -144,7 +144,7 @@ Once connected, your AI reads before it answers and files what it learns, withou
 
 ## What your AI can do once connected
 
-- **Ask before answering.** `recall` returns the right notes with the exact matching lines cited, in about 40ms. If the answer is not in your notes, it says so. It never invents.
+- **Ask before answering.** `recall` returns the right notes with the exact matching lines cited, in about 49ms. If the answer is not in your notes, it says so. It never invents.
 - **Remember what it learns.** `write_note` files new knowledge in the right folder, links it to related notes, and stamps which AI wrote it.
 - **Respect your privacy.** You decide per AI what each one can see.
 - **Handle huge documents.** A 150,000-word reference doc comes back as a map, and the AI reads just the section that answers.

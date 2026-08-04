@@ -1,7 +1,8 @@
 {
   "name": "callosium",
-  "version": "0.1.17",
-  "description": "Callosium: one brain, every AI, your files. A local-first second brain any AI plugs into over MCP. In active development, launching 4 August 2026.",
+  "version": "0.1.18",
+  "mcpName": "io.github.callosium/callosium",
+  "description": "Callosium: one brain, every AI, your files. A local-first second brain any AI plugs into over MCP. Your notes stay plain Markdown in a folder you own.",
   "keywords": [
     "second-brain",
     "mcp",

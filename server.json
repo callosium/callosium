@@ -1,0 +1,57 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.callosium/callosium",
+  "title": "Callosium",
+  "description": "One shared memory for every AI you use, in plain Markdown files you own.",
+  "version": "0.1.18",
+  "websiteUrl": "https://callosium.com",
+  "repository": {
+    "url": "https://github.com/callosium/callosium",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "callosium",
+      "version": "0.1.18",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp",
+          "description": "Serve the brain over MCP on stdio."
+        },
+        {
+          "type": "named",
+          "name": "--brain",
+          "description": "Path to your brain folder. Run 'callosium' first: the dashboard creates or adopts it.",
+          "format": "filepath",
+          "isRequired": true
+        },
+        {
+          "type": "named",
+          "name": "--agent",
+          "description": "Agent id for this AI client, issued by the dashboard's Agents screen.",
+          "isRequired": true
+        },
+        {
+          "type": "named",
+          "name": "--token",
+          "description": "Token for this agent, issued alongside the id. Scopes which folders this AI may read.",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "CALLOSIUM_MODEL_DIR",
+          "description": "Optional. Where the local embedding model is cached. Defaults to a per-user cache directory.",
+          "format": "filepath",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}

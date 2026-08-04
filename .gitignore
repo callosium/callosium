@@ -73,3 +73,7 @@ test/wp-judge-data.mjs
 test/wp-multihop.mjs
 test/wp-secondhop.mjs
 test/.review-pass.wf.js
+
+# MCP registry publishing tool (downloaded binary, not source)
+mcp-publisher.exe
+mcp-publisher

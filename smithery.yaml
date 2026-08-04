@@ -1,0 +1,38 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+#
+# Callosium runs on the user's own machine, so this declares the local stdio
+# launch, not a hosted deployment. The three values below are issued by the
+# dashboard's Agents screen after you connect a brain; there is no API key to
+# paste and nothing is sent to a server we run.
+
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required:
+      - brain
+      - agent
+      - token
+    properties:
+      brain:
+        type: string
+        description: >-
+          Absolute path to your brain folder. Run `callosium` once first: the
+          dashboard creates a new brain or adopts an existing vault.
+      agent:
+        type: string
+        description: >-
+          The agent id for this AI client, issued by the dashboard's Agents
+          screen. Each connected AI gets its own.
+      token:
+        type: string
+        description: >-
+          The token issued alongside the agent id. It decides which folders
+          this AI is allowed to read.
+  commandFunction:
+    |-
+    (config) => ({ command: 'callosium', args: ['mcp', '--brain', config.brain, '--agent', config.agent, '--token', config.token] })
+  exampleConfig:
+    brain: /Users/you/Documents/My Brain
+    agent: claude-desktop
+    token: issued-by-the-dashboard

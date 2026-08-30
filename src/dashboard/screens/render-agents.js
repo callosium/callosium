@@ -367,6 +367,52 @@ function ag_serverSpec(){
   if(c && c.command) return c;
   return null;
 }
+// ── one-click connect ────────────────────────────────────────────────────────
+// Callosium writes its entry into the AI client's OWN config file. This is exactly
+// what the tools whose connectors "just appear" do — read off a real machine,
+// ChatCut's entry is an ordinary stdio server with no port and no token; it needs no
+// setup because its installer wrote the file. We already generate the identical
+// shape, and used to only show it to the owner to paste. The token rides inside the
+// file we write, so nobody ever sees or types it.
+async function ag_loadClients(){
+  if(state.ag_clients) return;
+  try{ const r = await api('/api/clients'); state.ag_clients = (r && r.clients) || []; }
+  catch(_){ state.ag_clients = []; }   // no panel rather than a broken one
+  agentsPaint();
+}
+
+function ag_autoConnectPanel(){
+  const done = state.ag_installed;
+  if(done && !done.writeFailed){
+    return `
+      <div style="border:1px solid var(--acid);background:rgba(82,242,184,.07);padding:14px 15px;margin-bottom:14px">
+        <div style="font-family:var(--pixel);font-weight:600;font-size:14px;color:var(--acid);margin-bottom:6px">set up in ${esc(done.client)}</div>
+        <div style="font-family:var(--mono);font-size:11.5px;color:var(--dust);word-break:break-all;margin-bottom:8px">${esc(done.file||'')}</div>
+        <div style="font-size:13px;color:var(--starlight);margin-bottom:6px">${esc(done.restart||'')}</div>
+        <div style="font-family:var(--mono);font-size:11px;color:var(--faint)">${done.otherServersKept ? esc(String(done.otherServersKept)) + ' other server' + (done.otherServersKept===1?'':'s') + ' left untouched · ' : ''}${done.backup ? 'a backup of the original sits next to it' : 'new file created'}</div>
+      </div>`;
+  }
+  const err = (done && done.writeFailed) || state.ag_installErr;
+  const cs = (state.ag_clients || []).filter(c => c.installable);
+  const errHTML = err ? `
+      <div style="border:1px solid var(--amber);background:rgba(255,180,84,.07);padding:12px 14px;margin-bottom:12px">
+        <div style="font-size:13px;color:var(--amber);margin-bottom:4px">couldn't write it for you</div>
+        <div style="font-family:var(--mono);font-size:11.5px;color:var(--dust)">${esc(String(err))}</div>
+        <div style="font-size:12.5px;color:var(--faint);margin-top:6px">nothing was changed — use the manual steps below.</div>
+      </div>` : '';
+  if(!cs.length) return errHTML;
+  const busy = state.ag_installing;
+  return errHTML + `
+    <div style="border:1px solid var(--edge2);background:var(--surface2);padding:14px 15px;margin-bottom:14px">
+      <div style="font-family:var(--pixel);font-weight:600;font-size:14px;margin-bottom:4px">let me set it up</div>
+      <div style="font-size:12.5px;color:var(--dust);margin-bottom:11px">I'll write the connection into the app's own settings. nothing to copy, nothing to paste.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        ${cs.map(c => `<button data-ag-act="autoConnect" data-client="${esc(c.id)}"${busy?' disabled':''} style="font-family:var(--mono);font-size:12px;padding:9px 13px;background:transparent;color:${busy===c.id?'var(--dust)':'var(--synapse-ink)'};border:1px solid ${busy===c.id?'var(--edge2)':'var(--synapse)'};cursor:${busy?'default':'pointer'}">${busy===c.id?'writing…':esc(c.label)}</button>`).join('')}
+      </div>
+      <div style="font-size:11.5px;color:var(--faint);margin-top:10px">you'll still need to restart the app afterwards — it only reads its settings at startup.</div>
+    </div>`;
+}
+
 function agentsLinkModal(){
   if(!state.ag_linkOpen) return '';
   const step = state.ag_linkStep || 0;
@@ -442,6 +488,7 @@ function agentsLinkModal(){
           <span style="width:40px;height:40px;flex-shrink:0;border-radius:0;background:rgba(82,242,184,.1);border:1px solid var(--acid);display:flex;align-items:center;justify-content:center;color:var(--acid);font-size:18px">${rotated?'↻':'✓'}</span>
           <div><div style="font-family:var(--pixel);font-weight:600;font-size:19px">${headline}</div><div style="font-size:12.5px;color:var(--dust);margin-top:2px">${subline}</div></div>
         </div>
+        ${ag_autoConnectPanel()}
         ${callosiumGuideHTML(spec)}
         <div style="display:flex;gap:10px;margin-top:6px">
           <button data-ag-act="finishLink" data-autofocus style="flex:1;font-family:var(--pixel);font-weight:500;font-size:13px;letter-spacing:.04em;text-transform:uppercase;border:1px solid var(--synapse);color:var(--synapse-ink);background:transparent;padding:12px;border-radius:0;cursor:pointer">${rotated?'done':'done — set its folders'}</button>
@@ -554,6 +601,7 @@ function agentsWire(){
       if(act === 'linkBack'){ state.ag_linkPicked = false; state.ag_linkErr = null; agentsPaint(); return; }
       if(act === 'pair'){ ag_pair(); return; }
       if(act === 'copyConfig'){ ag_copyConfig(el); return; }
+      if(act === 'autoConnect'){ ag_autoConnect(el.dataset.client); return; }
       if(act === 'finishLink'){ ag_finishLink(); return; }
       if(act === 'rotate'){ ag_rotate(); return; }
       if(act === 'openUnlink'){ state.ag_unlinkOpen = true; state.ag_unlinkErr = null; agentsPaint(); return; }
@@ -585,6 +633,7 @@ function agentsWire(){
 function ag_openLink(){
   state.ag_linkOpen = true; state.ag_linkStep = 0; state.ag_linkErr = null;
   state.ag_linkName = ''; state.ag_linkId = ''; state.ag_pairConfig = null; state.ag_rotated = false;
+  state.ag_installed = null; state.ag_installErr = null; state.ag_installing = null;
   state.ag_linkPicked = false;   // start on the searchable AI dropdown (0a), not the name form
   state.ag_modalFrom = 'openLink';
   agentsPaint();
@@ -669,6 +718,25 @@ async function ag_renameSave(){
   agentsPaint();
 }
 
+// Write the connection into the chosen client's config. Idempotent server-side, so
+// this is safe to press again — and safe to press for an agent that is already
+// paired, which is the normal case here since pairing happened at step 1.
+async function ag_autoConnect(clientId){
+  if(!clientId || state.ag_installing) return;
+  state.ag_installing = clientId; state.ag_installErr = null; state.ag_installed = null;
+  agentsPaint();
+  try{
+    const res = await post('/api/connect', { id: state.ag_linkId, displayName: state.ag_linkName, client: clientId });
+    if(res && res.httpStatus) state.ag_installErr = res.error || 'the engine refused it.';
+    else state.ag_installed = res;
+  }catch(e){
+    state.ag_installErr = "couldn't reach the engine.";
+  }
+  state.ag_installing = null;
+  agentsPaint();
+  if(state.ag_installed && !state.ag_installed.writeFailed) announce('written into ' + (state.ag_installed.client||'the app') + ' · restart it');
+}
+
 async function ag_pair(){
   const name = (state.ag_linkName || '').trim();
   let id = (state.ag_linkId || '').trim().toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
@@ -682,6 +750,8 @@ async function ag_pair(){
     const res = await post('/api/pair', { id, displayName: name });
     state.ag_pairConfig = (res && res.config) || null;
     state.ag_linkStep = 2;
+    state.ag_installed = null; state.ag_installErr = null;
+    ag_loadClients();
     agentsPaint();
     announce(name + ' connected · copy its config');
   }catch(e){

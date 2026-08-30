@@ -29,6 +29,7 @@ import { aliasesOf } from '../core/aliases.ts';
 import { pairAgent, loadAgents, updateAgents, rotateAgentToken, renameAgent } from './../mcp/agents.ts';
 import { serveHttp, mcpCacheSource, type BrainSource, type ServerHandle } from './../mcp/server.ts';
 import { liveBanner } from '../util/term.ts';
+import { clientTargets, findClient, installClientConfig } from './clients.ts';
 import type { GraphIndex, NotePath } from '../core/types.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1021,6 +1022,74 @@ async function handleRotate(res: http.ServerResponse, body: Json) {
     send(res, 200, { agent: { id: agent.id, displayName: agent.displayName }, config });
   } catch (err) {
     send(res, 400, { error: (err as Error).message });
+  }
+}
+
+// The clients we can write a config INTO, so the cockpit can offer a button rather
+// than a block of JSON to paste. Reports each one's path and whether its file already
+// exists, so the UI never offers to write somewhere this platform does not have.
+function handleClients(res: http.ServerResponse) {
+  send(res, 200, {
+    clients: clientTargets().map((c) => ({
+      id: c.id,
+      label: c.label,
+      file: c.file,
+      installable: !!c.file,
+      alreadyHasFile: !!c.file && existsSync(c.file),
+      restart: c.restart,
+    })),
+  });
+}
+
+// CONNECT: pair an agent AND write it into the client's own config file.
+//
+// This is the entire difference between us and the tools whose connectors "just
+// appear". Read off a real machine, ChatCut's entry is an ordinary stdio server with
+// no port and no token — it needs no setup because its INSTALLER wrote the entry. We
+// have generated the identical shape all along (mcpClientConfig) and only ever showed
+// it to the owner to paste. The token stays inside the file we write, so it is never
+// something anyone has to see or type.
+async function handleConnect(res: http.ServerResponse, body: Json) {
+  if (!brainPath) return send(res, 400, { error: 'Connect a brain first.' });
+  const id = (body.id as string)?.trim();
+  const displayName = (body.displayName as string)?.trim();
+  const clientId = (body.client as string)?.trim();
+  if (!id || !displayName) return send(res, 400, { error: 'Need an id and a display name.' });
+  const client = findClient(clientId);
+  if (!client) return send(res, 400, { error: 'Unknown client.' });
+  if (!client.file) return send(res, 400, { error: client.label + ' has no config file on this platform.' });
+
+  const vault = Vault.open(brainPath);
+  // Idempotent on purpose. The cockpit offers this button AFTER the agent is paired,
+  // and again later to re-install a config, so an existing id is the normal case
+  // rather than an error. Reuse that agent's live token: minting a second identity
+  // for the same client would split its attribution and give it separate scopes the
+  // owner never set.
+  const reg = await loadAgents(vault).catch(() => ({ agents: [] }));
+  let agent = reg.agents.find((a) => a.id === id);
+  if (!agent) {
+    try {
+      agent = await pairAgent(vault, id, displayName);
+      dropCache();
+    } catch (err) {
+      return send(res, 400, { error: (err as Error).message });
+    }
+  }
+  const config = mcpClientConfig(vault.root, agent.id, agent.token);
+  const entry = (config.mcpServers as Record<string, unknown>).callosium;
+  try {
+    const result = await installClientConfig(client, 'callosium', entry);
+    send(res, 200, { agent: { id: agent.id, displayName: agent.displayName }, client: client.label, ...result });
+  } catch (err) {
+    // Paired, but the file was NOT written. Say so plainly and hand back the config so
+    // the owner can still paste it, rather than being left with a half-done connection
+    // and no way to finish it.
+    send(res, 200, {
+      agent: { id: agent.id, displayName: agent.displayName },
+      client: client.label,
+      writeFailed: (err as Error).message,
+      config,
+    });
   }
 }
 
@@ -2204,7 +2273,7 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
   // so a bare cross-site <img src>/GET must not be able to fire it. The UI issues
   // it as a hidden form POST, which still streams to disk (unlike fetch+blob,
   // which would buffer the whole archive in browser memory).
-  const postOnly = new Set(['/api/scope', '/api/revoke', '/api/pair', '/api/rotate', '/api/rename', '/api/browse', '/api/pick-folder', '/api/inspect', '/api/note/save', '/api/open-folder', '/api/signup', '/api/signout', '/api/init', '/api/export', '/api/link/preview', '/api/link/apply', '/api/cleanup/preview', '/api/cleanup/apply', '/api/health/dismiss', '/api/health/undismiss', '/api/history/restore', '/api/desktop/update', '/api/self-update']);
+  const postOnly = new Set(['/api/scope', '/api/revoke', '/api/pair', '/api/connect', '/api/rotate', '/api/rename', '/api/browse', '/api/pick-folder', '/api/inspect', '/api/note/save', '/api/open-folder', '/api/signup', '/api/signout', '/api/init', '/api/export', '/api/link/preview', '/api/link/apply', '/api/cleanup/preview', '/api/cleanup/apply', '/api/health/dismiss', '/api/health/undismiss', '/api/history/restore', '/api/desktop/update', '/api/self-update']);
 
   // Per-launch caller token (P2 #13): defense-in-depth on top of the origin guard.
   // Minted fresh each launch, embedded in the served HTML (a <meta>), and echoed
@@ -2334,6 +2403,7 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
       if (url.pathname === '/api/history/restore') return await handleHistoryRestore(res, await readBody(req));
       if (url.pathname === '/api/graph') return await handleGraph(req, res);
       if (url.pathname === '/api/agents') return await handleAgents(res);
+      if (url.pathname === '/api/clients') return handleClients(res);
       if (url.pathname === '/api/scope') return await handleScope(res, await readBody(req));
       if (url.pathname === '/api/revoke') return await handleRevoke(res, await readBody(req));
       if (url.pathname === '/api/browse') return await handleBrowse(res, await readBody(req));
@@ -2342,6 +2412,7 @@ export async function serveDashboard(opts: { port?: number; brain?: string; mcpP
       // /api/ingest doubles as re-index: with no ?path it re-ingests the current brain.
       if (url.pathname === '/api/ingest') return await handleIngest(req, res, url.searchParams.get('path') || brainPath || '');
       if (url.pathname === '/api/pair') return await handlePair(res, await readBody(req));
+      if (url.pathname === '/api/connect') return await handleConnect(res, await readBody(req));
       if (url.pathname === '/api/rotate') return await handleRotate(res, await readBody(req));
       if (url.pathname === '/api/rename') return await handleRename(res, await readBody(req));
       if (url.pathname === '/api/open-folder') return await handleOpenFolder(res, await readBody(req));
